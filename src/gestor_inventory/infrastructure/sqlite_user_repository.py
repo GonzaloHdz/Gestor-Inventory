@@ -64,6 +64,29 @@ class SqliteUserRepository:
             )
             return user, role_id
 
+    def get_user_for_login(self, *, company_id: int, email: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, company_id, email, password_hash, is_active, verified
+                FROM users
+                WHERE company_id = ? AND email = ?
+                LIMIT 1
+                """,
+                (company_id, email),
+            ).fetchone()
+            if row is None:
+                return None
+            user_id, company_id_v, email_v, password_hash, is_active, verified = row
+            return {
+                "id": int(user_id),
+                "company_id": int(company_id_v),
+                "email": str(email_v),
+                "password_hash": str(password_hash),
+                "is_active": bool(is_active),
+                "verified": bool(verified),
+            }
+
     @contextmanager
     def _connect(self):
         conn = self._persistent_conn or sqlite3.connect(self._db_path)

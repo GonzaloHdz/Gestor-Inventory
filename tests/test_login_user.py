@@ -1,0 +1,75 @@
+import os
+import sys
+import unittest
+
+ROOT = os.path.dirname(os.path.dirname(__file__))
+SRC = os.path.join(ROOT, "src")
+sys.path.insert(0, SRC)
+
+from gestor_inventory.application.login_user import LoginRequest, login_user
+from gestor_inventory.application.register_user import RegisterUserRequest, register_user
+from gestor_inventory.domain.errors import InvalidCredentialsError
+from gestor_inventory.infrastructure.sqlite_user_repository import SqliteUserRepository
+from gestor_inventory.security.jwt import verify_jwt_hs256
+
+
+class LoginUserTests(unittest.TestCase):
+    def setUp(self):
+        self.repo = SqliteUserRepository(":memory:")
+        self.jwt_secret = "test-secret"
+
+    def test_login_success_returns_valid_jwt(self):
+        reg = register_user(
+            self.repo,
+            RegisterUserRequest(company_id=1, email="User@Example.com", password="secret", role_id=10),
+        )
+        res = login_user(
+            self.repo,
+            LoginRequest(company_id=1, email="user@example.com", password="secret"),
+            jwt_secret=self.jwt_secret,
+            access_token_ttl_seconds=3600,
+        )
+        payload = verify_jwt_hs256(res.access_token, secret=self.jwt_secret)
+        self.assertEqual(payload["company_id"], 1)
+        self.assertEqual(payload["email"], "user@example.com")
+        self.assertEqual(payload["sub"], str(reg.user.id))
+
+    def test_login_invalid_password_is_generic_failure(self):
+        register_user(
+            self.repo,
+            RegisterUserRequest(company_id=1, email="a@b.com", password="secret", role_id=10),
+        )
+        with self.assertRaises(InvalidCredentialsError):
+            login_user(
+                self.repo,
+                LoginRequest(company_id=1, email="a@b.com", password="wrong"),
+                jwt_secret=self.jwt_secret,
+            )
+
+    def test_login_invalid_email_is_generic_failure(self):
+        register_user(
+            self.repo,
+            RegisterUserRequest(company_id=1, email="a@b.com", password="secret", role_id=10),
+        )
+        with self.assertRaises(InvalidCredentialsError):
+            login_user(
+                self.repo,
+                LoginRequest(company_id=1, email="x@y.com", password="secret"),
+                jwt_secret=self.jwt_secret,
+            )
+
+    def test_login_is_isolated_by_company(self):
+        register_user(
+            self.repo,
+            RegisterUserRequest(company_id=1, email="a@b.com", password="secret", role_id=10),
+        )
+        with self.assertRaises(InvalidCredentialsError):
+            login_user(
+                self.repo,
+                LoginRequest(company_id=2, email="a@b.com", password="secret"),
+                jwt_secret=self.jwt_secret,
+            )
+
+
+if __name__ == "__main__":
+    unittest.main()

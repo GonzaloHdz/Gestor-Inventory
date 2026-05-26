@@ -1,4 +1,5 @@
 import os
+import secrets
 from http.server import ThreadingHTTPServer
 
 from gestor_inventory.infrastructure.sqlite_user_repository import SqliteUserRepository
@@ -9,9 +10,11 @@ def main() -> None:
     host = os.environ.get("GI_HOST", "127.0.0.1")
     port = int(os.environ.get("GI_PORT", "8000"))
     db_path = os.environ.get("GI_SQLITE_PATH", os.path.join(os.getcwd(), "gestor_inventory.sqlite3"))
+    jwt_secret = os.environ.get("GI_JWT_SECRET") or secrets.token_urlsafe(32)
 
     repo = SqliteUserRepository(db_path=db_path)
     HttpApiHandler.repo = repo
+    HttpApiHandler.jwt_secret = jwt_secret
     server = ThreadingHTTPServer((host, port), HttpApiHandler)
     server.serve_forever()
 
