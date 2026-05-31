@@ -225,11 +225,7 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         try:
             payload = self._read_json()
             company_id = int(payload["company_id"])
-            authz = self._require_authz(
-                company_id=company_id,
-                required_permission_codes={"roles:modificar", "usuarios:modificar", "usuarios:editar"},
-                required_role_names={"Administrador", "Superadministrador"},
-            )
+            authz = self._require_permissions({"roles:modificar"}, company_id=company_id)
             if authz is None:
                 return
             req = AssignUserRoleRequest(
@@ -263,11 +259,7 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         try:
             payload = self._read_json()
             company_id = int(payload["company_id"])
-            authz = self._require_authz(
-                company_id=company_id,
-                required_permission_codes={"roles:modificar", "usuarios:modificar", "usuarios:editar"},
-                required_role_names={"Administrador", "Superadministrador"},
-            )
+            authz = self._require_permissions({"roles:modificar"}, company_id=company_id)
             if authz is None:
                 return
             req = RevokeUserRoleRequest(
@@ -318,19 +310,21 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized", "message": "No autorizado"})
             return None
 
-    def _require_authz(
+    def _require_permissions(
         self,
+        required_permissions: set[str],
         *,
-        company_id: int,
-        required_permission_codes: set[str],
-        required_role_names: set[str],
+        company_id: int | None = None,
     ) -> dict | None:
         payload = self._require_auth_payload()
         if payload is None:
             return None
 
         token_company_id = payload.get("company_id")
-        if not isinstance(token_company_id, int) or int(token_company_id) != int(company_id):
+        if not isinstance(token_company_id, int) or int(token_company_id) <= 0:
+            self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": "Prohibido"})
+            return None
+        if company_id is not None and int(token_company_id) != int(company_id):
             self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": "Prohibido"})
             return None
 
@@ -341,20 +335,16 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": "Prohibido"})
             return None
 
-        if not hasattr(self.repo, "list_user_permission_codes") or not hasattr(self.repo, "list_user_role_names"):
+        if not hasattr(self.repo, "list_user_permission_codes"):
             self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": "Prohibido"})
             return None
 
-        role_names = set(self.repo.list_user_role_names(company_id=int(company_id), user_id=actor_user_id))
-        if required_role_names and role_names.intersection(required_role_names):
-            return payload
+        permissions = set(self.repo.list_user_permission_codes(company_id=int(token_company_id), user_id=actor_user_id))
+        if required_permissions and not required_permissions.issubset(permissions):
+            self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": "Prohibido"})
+            return None
 
-        permission_codes = set(self.repo.list_user_permission_codes(company_id=int(company_id), user_id=actor_user_id))
-        if required_permission_codes and permission_codes.intersection(required_permission_codes):
-            return payload
-
-        self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": "Prohibido"})
-        return None
+        return payload
 
     def _read_json(self) -> dict:
         length = int(self.headers.get("Content-Length", "0"))
