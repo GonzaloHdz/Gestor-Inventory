@@ -6,6 +6,14 @@ class WeakPasswordError(ValidationError):
     pass
 
 
+class ForbiddenError(Exception):
+    pass
+
+
+class NotFoundError(Exception):
+    pass
+
+
 class EmailAlreadyExistsError(Exception):
     pass
 

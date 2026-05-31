@@ -288,6 +288,108 @@ class SqliteUserRepository:
                 raise sqlite3.IntegrityError("user not found")
             conn.commit()
 
+    def user_belongs_to_company(self, *, company_id: int, user_id: int) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM users WHERE company_id = ? AND id = ? LIMIT 1",
+                (int(company_id), int(user_id)),
+            ).fetchone()
+            return row is not None
+
+    def role_belongs_to_company(self, *, company_id: int, role_id: int) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM roles WHERE company_id = ? AND id = ? LIMIT 1",
+                (int(company_id), int(role_id)),
+            ).fetchone()
+            return row is not None
+
+    def assign_role_to_user(self, *, company_id: int, user_id: int, role_id: int) -> bool:
+        with self._connect() as conn:
+            conn.execute("BEGIN")
+            self._ensure_base_rbac(conn, company_id=int(company_id))
+            row_user = conn.execute(
+                "SELECT 1 FROM users WHERE company_id = ? AND id = ? LIMIT 1",
+                (int(company_id), int(user_id)),
+            ).fetchone()
+            if row_user is None:
+                conn.execute("ROLLBACK")
+                return False
+            row_role = conn.execute(
+                "SELECT 1 FROM roles WHERE company_id = ? AND id = ? LIMIT 1",
+                (int(company_id), int(role_id)),
+            ).fetchone()
+            if row_role is None:
+                conn.execute("ROLLBACK")
+                return False
+
+            cur = conn.execute(
+                """
+                INSERT OR IGNORE INTO user_roles (company_id, user_id, role_id)
+                VALUES (?, ?, ?)
+                """,
+                (int(company_id), int(user_id), int(role_id)),
+            )
+            conn.execute("COMMIT")
+            return int(cur.rowcount) == 1
+
+    def revoke_role_from_user(self, *, company_id: int, user_id: int, role_id: int) -> bool:
+        with self._connect() as conn:
+            conn.execute("BEGIN")
+            row_user = conn.execute(
+                "SELECT 1 FROM users WHERE company_id = ? AND id = ? LIMIT 1",
+                (int(company_id), int(user_id)),
+            ).fetchone()
+            if row_user is None:
+                conn.execute("ROLLBACK")
+                return False
+            row_role = conn.execute(
+                "SELECT 1 FROM roles WHERE company_id = ? AND id = ? LIMIT 1",
+                (int(company_id), int(role_id)),
+            ).fetchone()
+            if row_role is None:
+                conn.execute("ROLLBACK")
+                return False
+
+            cur = conn.execute(
+                """
+                DELETE FROM user_roles
+                WHERE company_id = ? AND user_id = ? AND role_id = ?
+                """,
+                (int(company_id), int(user_id), int(role_id)),
+            )
+            conn.execute("COMMIT")
+            return int(cur.rowcount) >= 1
+
+    def list_user_role_names(self, *, company_id: int, user_id: int) -> list[str]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT r.name
+                FROM user_roles ur
+                JOIN roles r ON r.company_id = ur.company_id AND r.id = ur.role_id
+                WHERE ur.company_id = ? AND ur.user_id = ?
+                ORDER BY r.id
+                """,
+                (int(company_id), int(user_id)),
+            ).fetchall()
+            return [str(name) for (name,) in rows]
+
+    def list_user_permission_codes(self, *, company_id: int, user_id: int) -> list[str]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT p.code
+                FROM user_roles ur
+                JOIN role_permissions rp ON rp.company_id = ur.company_id AND rp.role_id = ur.role_id
+                JOIN permissions p ON p.id = rp.permission_id
+                WHERE ur.company_id = ? AND ur.user_id = ?
+                ORDER BY p.code
+                """,
+                (int(company_id), int(user_id)),
+            ).fetchall()
+            return [str(code) for (code,) in rows]
+
     def create_audit_log(
         self,
         *,
