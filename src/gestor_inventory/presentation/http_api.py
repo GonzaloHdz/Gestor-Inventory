@@ -13,11 +13,19 @@ from gestor_inventory.domain.errors import (
     PasswordResetTokenInvalidError,
     ValidationError,
 )
+from gestor_inventory.security.jwt import verify_jwt_hs256
 
 
 class HttpApiHandler(BaseHTTPRequestHandler):
     repo = None
     jwt_secret = None
+    jwt_expiration_minutes = 60
+
+    def do_GET(self):
+        if self.path == "/api/auth/me":
+            self._handle_me()
+            return
+        self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
 
     def do_POST(self):
         if self.path == "/api/users/register":
@@ -83,7 +91,12 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             if not isinstance(self.jwt_secret, str) or not self.jwt_secret:
                 self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
                 return
-            res = login_user(self.repo, req, jwt_secret=self.jwt_secret)
+            res = login_user(
+                self.repo,
+                req,
+                jwt_secret=self.jwt_secret,
+                access_token_ttl_seconds=int(self.jwt_expiration_minutes) * 60,
+            )
         except KeyError:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
             return
@@ -98,6 +111,21 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             return
 
         self._send_json(HTTPStatus.OK, {"access_token": res.access_token, "token_type": "bearer"})
+
+    def _handle_me(self) -> None:
+        payload = self._require_auth_payload()
+        if payload is None:
+            return
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "sub": payload.get("sub"),
+                "company_id": payload.get("company_id"),
+                "email": payload.get("email"),
+                "iat": payload.get("iat"),
+                "exp": payload.get("exp"),
+            },
+        )
 
     def _handle_password_reset_request(self) -> None:
         try:
@@ -154,6 +182,24 @@ class HttpApiHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format, *args):
         return
+
+    def _require_auth_payload(self) -> dict | None:
+        if not isinstance(self.jwt_secret, str) or not self.jwt_secret:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return None
+        auth = self.headers.get("Authorization", "")
+        if not isinstance(auth, str) or not auth.startswith("Bearer "):
+            self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized", "message": "No autorizado"})
+            return None
+        token = auth.removeprefix("Bearer ").strip()
+        if not token:
+            self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized", "message": "No autorizado"})
+            return None
+        try:
+            return verify_jwt_hs256(token, secret=self.jwt_secret)
+        except Exception:
+            self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized", "message": "No autorizado"})
+            return None
 
     def _read_json(self) -> dict:
         length = int(self.headers.get("Content-Length", "0"))
