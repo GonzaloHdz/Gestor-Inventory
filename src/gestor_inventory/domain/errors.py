@@ -2,6 +2,10 @@ class ValidationError(ValueError):
     pass
 
 
+class WeakPasswordError(ValidationError):
+    pass
+
+
 class EmailAlreadyExistsError(Exception):
     pass
 

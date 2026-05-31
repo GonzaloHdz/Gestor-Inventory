@@ -7,6 +7,7 @@ from typing import Protocol
 from gestor_inventory.domain.errors import EmailAlreadyExistsError, ValidationError
 from gestor_inventory.domain.user import User
 from gestor_inventory.security.password_hash import hash_password
+from gestor_inventory.security.password_policy import validate_password_strength
 
 
 class UserRepository(Protocol):
@@ -108,6 +109,5 @@ def _normalize_email(email: str) -> str:
 
 
 def _validate_password(password: str) -> str:
-    if not isinstance(password, str) or not password:
-        raise ValidationError("password inválido")
-    return password
+    validate_password_strength(password)
+    return str(password)

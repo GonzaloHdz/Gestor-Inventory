@@ -20,7 +20,7 @@ class VerifyEmailTests(unittest.TestCase):
     def test_verify_email_happy_path_marks_user_verified(self):
         reg = register_user(
             self.repo,
-            RegisterUserRequest(company_id=1, email="user@example.com", password="secret", role_id=10),
+            RegisterUserRequest(company_id=1, email="user@example.com", password="Secret1!", role_id=10),
             now=1_000_000,
         )
         parsed = urlparse(reg.verification_url)
@@ -35,7 +35,7 @@ class VerifyEmailTests(unittest.TestCase):
     def test_verify_email_is_isolated_by_company(self):
         reg = register_user(
             self.repo,
-            RegisterUserRequest(company_id=1, email="user@example.com", password="secret", role_id=10),
+            RegisterUserRequest(company_id=1, email="user@example.com", password="Secret1!", role_id=10),
             now=1_000_000,
         )
         parsed = urlparse(reg.verification_url)
@@ -51,4 +51,3 @@ class VerifyEmailTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

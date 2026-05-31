@@ -70,7 +70,7 @@ class HttpVerifyEmailTests(unittest.TestCase):
     def test_register_returns_verification_url_and_verifies_user(self):
         status, body = self._post_json(
             "/api/users/register",
-            {"company_id": 1, "email": "user@example.com", "password": "secret", "role_id": 10},
+            {"company_id": 1, "email": "user@example.com", "password": "Secret1!", "role_id": 10},
         )
         self.assertEqual(status, 201)
         self.assertIn("verification_url", body)
@@ -86,7 +86,15 @@ class HttpVerifyEmailTests(unittest.TestCase):
         self.assertIsNotNone(user)
         self.assertTrue(user["verified"])
 
+    def test_register_rejects_weak_password_with_http_400_and_message(self):
+        status, body = self._post_json(
+            "/api/users/register",
+            {"company_id": 1, "email": "user2@example.com", "password": "weak", "role_id": 10},
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(body.get("error"), "validation_error")
+        self.assertIn("Contraseña débil", body.get("message", ""))
+
 
 if __name__ == "__main__":
     unittest.main()
-

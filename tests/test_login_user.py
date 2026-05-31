@@ -21,11 +21,11 @@ class LoginUserTests(unittest.TestCase):
     def test_login_success_returns_valid_jwt(self):
         reg = register_user(
             self.repo,
-            RegisterUserRequest(company_id=1, email="User@Example.com", password="secret", role_id=10),
+            RegisterUserRequest(company_id=1, email="User@Example.com", password="Secret1!", role_id=10),
         )
         res = login_user(
             self.repo,
-            LoginRequest(company_id=1, email="user@example.com", password="secret"),
+            LoginRequest(company_id=1, email="user@example.com", password="Secret1!"),
             jwt_secret=self.jwt_secret,
             access_token_ttl_seconds=3600,
         )
@@ -37,7 +37,7 @@ class LoginUserTests(unittest.TestCase):
     def test_login_invalid_password_is_generic_failure(self):
         register_user(
             self.repo,
-            RegisterUserRequest(company_id=1, email="a@b.com", password="secret", role_id=10),
+            RegisterUserRequest(company_id=1, email="a@b.com", password="Secret1!", role_id=10),
         )
         with self.assertRaises(InvalidCredentialsError):
             login_user(
@@ -49,24 +49,24 @@ class LoginUserTests(unittest.TestCase):
     def test_login_invalid_email_is_generic_failure(self):
         register_user(
             self.repo,
-            RegisterUserRequest(company_id=1, email="a@b.com", password="secret", role_id=10),
+            RegisterUserRequest(company_id=1, email="a@b.com", password="Secret1!", role_id=10),
         )
         with self.assertRaises(InvalidCredentialsError):
             login_user(
                 self.repo,
-                LoginRequest(company_id=1, email="x@y.com", password="secret"),
+                LoginRequest(company_id=1, email="x@y.com", password="Secret1!"),
                 jwt_secret=self.jwt_secret,
             )
 
     def test_login_is_isolated_by_company(self):
         register_user(
             self.repo,
-            RegisterUserRequest(company_id=1, email="a@b.com", password="secret", role_id=10),
+            RegisterUserRequest(company_id=1, email="a@b.com", password="Secret1!", role_id=10),
         )
         with self.assertRaises(InvalidCredentialsError):
             login_user(
                 self.repo,
-                LoginRequest(company_id=2, email="a@b.com", password="secret"),
+                LoginRequest(company_id=2, email="a@b.com", password="Secret1!"),
                 jwt_secret=self.jwt_secret,
             )
 
