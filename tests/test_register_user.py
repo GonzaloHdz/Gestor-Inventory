@@ -26,6 +26,7 @@ class RegisterUserTests(unittest.TestCase):
         self.assertTrue(res.user.is_active)
         self.assertFalse(res.user.verified)
         self.assertEqual(res.role_id, 10)
+        self.assertIn("company_id=1", res.verification_url)
         self.assertTrue(verify_password("secret", res.user.password_hash))
 
     def test_register_user_rejects_duplicate_email_same_company(self):

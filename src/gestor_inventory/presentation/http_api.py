@@ -1,4 +1,5 @@
 import json
+from urllib.parse import parse_qs, urlparse
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 
@@ -6,6 +7,7 @@ from gestor_inventory.application.login_user import LoginRequest, login_user
 from gestor_inventory.application.request_password_reset import RequestPasswordResetRequest, request_password_reset
 from gestor_inventory.application.register_user import RegisterUserRequest, register_user
 from gestor_inventory.application.reset_password import ResetPasswordRequest, reset_password
+from gestor_inventory.application.verify_email import VerifyEmailRequest, verify_email
 from gestor_inventory.domain.errors import (
     EmailAlreadyExistsError,
     InvalidCredentialsError,
@@ -22,8 +24,12 @@ class HttpApiHandler(BaseHTTPRequestHandler):
     jwt_expiration_minutes = 60
 
     def do_GET(self):
-        if self.path == "/api/auth/me":
+        parsed = urlparse(self.path)
+        if parsed.path == "/api/auth/me":
             self._handle_me()
+            return
+        if parsed.path == "/api/auth/verify-email":
+            self._handle_verify_email(parsed.query)
             return
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
 
@@ -51,7 +57,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 password=payload["password"],
                 role_id=payload["role_id"],
             )
-            res = register_user(self.repo, req)
+            host = self.headers.get("Host", "127.0.0.1")
+            base_url = f"http://{host}"
+            res = register_user(self.repo, req, base_url=base_url)
         except KeyError:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
             return
@@ -77,6 +85,7 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 "is_active": res.user.is_active,
                 "verified": res.user.verified,
                 "role_id": res.role_id,
+                "verification_url": res.verification_url,
             },
         )
 
@@ -126,6 +135,25 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 "exp": payload.get("exp"),
             },
         )
+
+    def _handle_verify_email(self, query: str) -> None:
+        try:
+            params = parse_qs(query, keep_blank_values=True)
+            company_id_raw = (params.get("company_id") or [None])[0]
+            token_raw = (params.get("token") or [None])[0]
+            req = VerifyEmailRequest(company_id=int(company_id_raw), token=token_raw)
+            verify_email(self.repo, req)
+        except (TypeError, ValueError, KeyError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._send_json(HTTPStatus.OK, {"status": "ok"})
 
     def _handle_password_reset_request(self) -> None:
         try:

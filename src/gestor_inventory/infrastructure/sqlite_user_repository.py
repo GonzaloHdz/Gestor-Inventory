@@ -117,6 +117,81 @@ class SqliteUserRepository:
             )
             conn.commit()
 
+    def create_email_verification_token(
+        self,
+        *,
+        company_id: int,
+        user_id: int,
+        token_hash: str,
+        expires_at: int,
+        created_at: int,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO email_verification_tokens (company_id, user_id, token_hash, expires_at, created_at, used_at)
+                VALUES (?, ?, ?, ?, ?, NULL)
+                """,
+                (company_id, user_id, str(token_hash), int(expires_at), int(created_at)),
+            )
+            conn.commit()
+
+    def consume_email_verification_token_and_verify_user(
+        self,
+        *,
+        company_id: int,
+        token_hash: str,
+        now: int,
+    ) -> tuple[str, int | None]:
+        with self._connect() as conn:
+            conn.execute("BEGIN")
+            row = conn.execute(
+                """
+                SELECT id, user_id, expires_at, used_at
+                FROM email_verification_tokens
+                WHERE company_id = ? AND token_hash = ?
+                LIMIT 1
+                """,
+                (company_id, str(token_hash)),
+            ).fetchone()
+            if row is None:
+                conn.execute("ROLLBACK")
+                return "not_found", None
+            token_id, user_id, expires_at, used_at = row
+            if used_at is not None:
+                conn.execute("ROLLBACK")
+                return "already_used", int(user_id)
+            if int(now) > int(expires_at):
+                conn.execute("ROLLBACK")
+                return "expired", int(user_id)
+
+            cur_user = conn.execute(
+                """
+                UPDATE users
+                SET verified = 1
+                WHERE company_id = ? AND id = ?
+                """,
+                (company_id, int(user_id)),
+            )
+            if cur_user.rowcount != 1:
+                conn.execute("ROLLBACK")
+                return "not_found", None
+
+            cur_token = conn.execute(
+                """
+                UPDATE email_verification_tokens
+                SET used_at = ?
+                WHERE company_id = ? AND id = ? AND used_at IS NULL
+                """,
+                (int(now), company_id, int(token_id)),
+            )
+            if cur_token.rowcount != 1:
+                conn.execute("ROLLBACK")
+                return "already_used", int(user_id)
+
+            conn.execute("COMMIT")
+            return "ok", int(user_id)
+
     def get_password_reset_token(self, *, company_id: int, token_hash: str) -> dict | None:
         with self._connect() as conn:
             row = conn.execute(
@@ -303,6 +378,21 @@ class SqliteUserRepository:
                 CREATE INDEX IF NOT EXISTS prt_company_id_idx ON password_reset_tokens (company_id);
                 CREATE INDEX IF NOT EXISTS prt_user_id_idx ON password_reset_tokens (user_id);
                 CREATE INDEX IF NOT EXISTS prt_token_hash_idx ON password_reset_tokens (token_hash);
+
+                CREATE TABLE IF NOT EXISTS email_verification_tokens (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  company_id INTEGER NOT NULL,
+                  user_id INTEGER NOT NULL,
+                  token_hash TEXT NOT NULL,
+                  expires_at INTEGER NOT NULL,
+                  created_at INTEGER NOT NULL,
+                  used_at INTEGER NULL,
+                  CONSTRAINT evt_company_token_unique UNIQUE (company_id, token_hash),
+                  CONSTRAINT evt_user_fk FOREIGN KEY (user_id) REFERENCES users (id)
+                );
+                CREATE INDEX IF NOT EXISTS evt_company_id_idx ON email_verification_tokens (company_id);
+                CREATE INDEX IF NOT EXISTS evt_user_id_idx ON email_verification_tokens (user_id);
+                CREATE INDEX IF NOT EXISTS evt_token_hash_idx ON email_verification_tokens (token_hash);
 
                 CREATE TABLE IF NOT EXISTS audit_logs (
                   id INTEGER PRIMARY KEY AUTOINCREMENT,
