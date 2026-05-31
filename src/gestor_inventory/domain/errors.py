@@ -8,3 +8,11 @@ class EmailAlreadyExistsError(Exception):
 
 class InvalidCredentialsError(Exception):
     pass
+
+
+class PasswordResetTokenInvalidError(Exception):
+    pass
+
+
+class PasswordResetTokenExpiredError(Exception):
+    pass

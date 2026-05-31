@@ -21,6 +21,17 @@ class SqliteUserRepository:
             ).fetchone()
             return row is not None
 
+    def get_user_id_by_email(self, *, company_id: int, email: str) -> int | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id FROM users WHERE company_id = ? AND email = ? LIMIT 1",
+                (company_id, email),
+            ).fetchone()
+            if row is None:
+                return None
+            (user_id,) = row
+            return int(user_id)
+
     def create_user_with_role(
         self,
         *,
@@ -87,6 +98,134 @@ class SqliteUserRepository:
                 "verified": bool(verified),
             }
 
+    def create_password_reset_token(
+        self,
+        *,
+        company_id: int,
+        user_id: int,
+        token_hash: str,
+        expires_at: int,
+        created_at: int,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO password_reset_tokens (company_id, user_id, token_hash, expires_at, created_at, used_at)
+                VALUES (?, ?, ?, ?, ?, NULL)
+                """,
+                (company_id, user_id, token_hash, int(expires_at), int(created_at)),
+            )
+            conn.commit()
+
+    def get_password_reset_token(self, *, company_id: int, token_hash: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, company_id, user_id, token_hash, expires_at, created_at, used_at
+                FROM password_reset_tokens
+                WHERE company_id = ? AND token_hash = ?
+                LIMIT 1
+                """,
+                (company_id, token_hash),
+            ).fetchone()
+            if row is None:
+                return None
+            token_id, company_id_v, user_id, token_hash_v, expires_at, created_at, used_at = row
+            return {
+                "id": int(token_id),
+                "company_id": int(company_id_v),
+                "user_id": int(user_id),
+                "token_hash": str(token_hash_v),
+                "expires_at": int(expires_at),
+                "created_at": int(created_at),
+                "used_at": int(used_at) if used_at is not None else None,
+            }
+
+    def consume_password_reset_token_and_update_password(
+        self,
+        *,
+        company_id: int,
+        token_hash: str,
+        new_password_hash: str,
+        now: int,
+    ) -> str:
+        with self._connect() as conn:
+            conn.execute("BEGIN")
+            row = conn.execute(
+                """
+                SELECT id, user_id, expires_at, used_at
+                FROM password_reset_tokens
+                WHERE company_id = ? AND token_hash = ?
+                LIMIT 1
+                """,
+                (company_id, token_hash),
+            ).fetchone()
+            if row is None:
+                conn.execute("ROLLBACK")
+                return "not_found"
+            token_id, user_id, expires_at, used_at = row
+            if used_at is not None:
+                conn.execute("ROLLBACK")
+                return "already_used"
+            if int(now) > int(expires_at):
+                conn.execute("ROLLBACK")
+                return "expired"
+
+            cur_user = conn.execute(
+                """
+                UPDATE users
+                SET password_hash = ?
+                WHERE company_id = ? AND id = ?
+                """,
+                (new_password_hash, company_id, int(user_id)),
+            )
+            if cur_user.rowcount != 1:
+                conn.execute("ROLLBACK")
+                return "not_found"
+
+            cur_token = conn.execute(
+                """
+                UPDATE password_reset_tokens
+                SET used_at = ?
+                WHERE company_id = ? AND id = ? AND used_at IS NULL
+                """,
+                (int(now), company_id, int(token_id)),
+            )
+            if cur_token.rowcount != 1:
+                conn.execute("ROLLBACK")
+                return "already_used"
+
+            conn.execute("COMMIT")
+            return "ok"
+
+    def update_user_password_hash(self, *, company_id: int, user_id: int, password_hash: str) -> None:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                UPDATE users
+                SET password_hash = ?
+                WHERE company_id = ? AND id = ?
+                """,
+                (password_hash, company_id, user_id),
+            )
+            if cur.rowcount != 1:
+                raise sqlite3.IntegrityError("user not found")
+            conn.commit()
+
+    def mark_password_reset_token_used(self, *, company_id: int, token_id: int, used_at: int) -> None:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                UPDATE password_reset_tokens
+                SET used_at = ?
+                WHERE company_id = ? AND id = ? AND used_at IS NULL
+                """,
+                (int(used_at), company_id, token_id),
+            )
+            if cur.rowcount != 1:
+                raise sqlite3.IntegrityError("token already used or not found")
+            conn.commit()
+
     @contextmanager
     def _connect(self):
         conn = self._persistent_conn or sqlite3.connect(self._db_path)
@@ -122,5 +261,20 @@ class SqliteUserRepository:
                 );
                 CREATE INDEX IF NOT EXISTS user_roles_company_id_idx ON user_roles (company_id);
                 CREATE INDEX IF NOT EXISTS user_roles_user_id_idx ON user_roles (user_id);
+
+                CREATE TABLE IF NOT EXISTS password_reset_tokens (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  company_id INTEGER NOT NULL,
+                  user_id INTEGER NOT NULL,
+                  token_hash TEXT NOT NULL,
+                  expires_at INTEGER NOT NULL,
+                  created_at INTEGER NOT NULL,
+                  used_at INTEGER NULL,
+                  CONSTRAINT prt_company_token_unique UNIQUE (company_id, token_hash),
+                  CONSTRAINT prt_user_fk FOREIGN KEY (user_id) REFERENCES users (id)
+                );
+                CREATE INDEX IF NOT EXISTS prt_company_id_idx ON password_reset_tokens (company_id);
+                CREATE INDEX IF NOT EXISTS prt_user_id_idx ON password_reset_tokens (user_id);
+                CREATE INDEX IF NOT EXISTS prt_token_hash_idx ON password_reset_tokens (token_hash);
                 """
             )

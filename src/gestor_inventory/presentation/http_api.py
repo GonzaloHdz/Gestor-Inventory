@@ -3,8 +3,16 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 
 from gestor_inventory.application.login_user import LoginRequest, login_user
+from gestor_inventory.application.request_password_reset import RequestPasswordResetRequest, request_password_reset
 from gestor_inventory.application.register_user import RegisterUserRequest, register_user
-from gestor_inventory.domain.errors import EmailAlreadyExistsError, InvalidCredentialsError, ValidationError
+from gestor_inventory.application.reset_password import ResetPasswordRequest, reset_password
+from gestor_inventory.domain.errors import (
+    EmailAlreadyExistsError,
+    InvalidCredentialsError,
+    PasswordResetTokenExpiredError,
+    PasswordResetTokenInvalidError,
+    ValidationError,
+)
 
 
 class HttpApiHandler(BaseHTTPRequestHandler):
@@ -17,6 +25,12 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/auth/login":
             self._handle_login()
+            return
+        if self.path == "/api/auth/password-reset/request":
+            self._handle_password_reset_request()
+            return
+        if self.path == "/api/auth/password-reset/confirm":
+            self._handle_password_reset_confirm()
             return
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
 
@@ -84,6 +98,59 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             return
 
         self._send_json(HTTPStatus.OK, {"access_token": res.access_token, "token_type": "bearer"})
+
+    def _handle_password_reset_request(self) -> None:
+        try:
+            payload = self._read_json()
+            req = RequestPasswordResetRequest(company_id=payload["company_id"], email=payload["email"])
+            res = request_password_reset(self.repo, req)
+        except KeyError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except json.JSONDecodeError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._send_json(
+            HTTPStatus.OK,
+            {"status": "ok", "reset_token": res.reset_token, "reset_url": res.reset_url},
+        )
+
+    def _handle_password_reset_confirm(self) -> None:
+        try:
+            payload = self._read_json()
+            req = ResetPasswordRequest(
+                company_id=payload["company_id"],
+                token=payload["token"],
+                new_password=payload["new_password"],
+            )
+            reset_password(self.repo, req)
+        except KeyError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except PasswordResetTokenExpiredError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "token_expired"})
+            return
+        except PasswordResetTokenInvalidError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_token"})
+            return
+        except json.JSONDecodeError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._send_json(HTTPStatus.OK, {"status": "ok"})
 
     def log_message(self, format, *args):
         return
