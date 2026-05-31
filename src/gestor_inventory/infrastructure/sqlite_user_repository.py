@@ -148,7 +148,7 @@ class SqliteUserRepository:
         token_hash: str,
         new_password_hash: str,
         now: int,
-    ) -> str:
+    ) -> tuple[str, int | None]:
         with self._connect() as conn:
             conn.execute("BEGIN")
             row = conn.execute(
@@ -162,14 +162,14 @@ class SqliteUserRepository:
             ).fetchone()
             if row is None:
                 conn.execute("ROLLBACK")
-                return "not_found"
+                return "not_found", None
             token_id, user_id, expires_at, used_at = row
             if used_at is not None:
                 conn.execute("ROLLBACK")
-                return "already_used"
+                return "already_used", int(user_id)
             if int(now) > int(expires_at):
                 conn.execute("ROLLBACK")
-                return "expired"
+                return "expired", int(user_id)
 
             cur_user = conn.execute(
                 """
@@ -181,7 +181,7 @@ class SqliteUserRepository:
             )
             if cur_user.rowcount != 1:
                 conn.execute("ROLLBACK")
-                return "not_found"
+                return "not_found", None
 
             cur_token = conn.execute(
                 """
@@ -193,10 +193,10 @@ class SqliteUserRepository:
             )
             if cur_token.rowcount != 1:
                 conn.execute("ROLLBACK")
-                return "already_used"
+                return "already_used", int(user_id)
 
             conn.execute("COMMIT")
-            return "ok"
+            return "ok", int(user_id)
 
     def update_user_password_hash(self, *, company_id: int, user_id: int, password_hash: str) -> None:
         with self._connect() as conn:
@@ -210,6 +210,33 @@ class SqliteUserRepository:
             )
             if cur.rowcount != 1:
                 raise sqlite3.IntegrityError("user not found")
+            conn.commit()
+
+    def create_audit_log(
+        self,
+        *,
+        company_id: int,
+        branch_id: int | None,
+        user_id: int | None,
+        event_type: str,
+        created_at: int,
+        metadata_json: str | None,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO audit_logs (company_id, branch_id, user_id, event_type, created_at, metadata_json)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    int(company_id),
+                    int(branch_id) if branch_id is not None else None,
+                    int(user_id) if user_id is not None else None,
+                    str(event_type),
+                    int(created_at),
+                    str(metadata_json) if metadata_json is not None else None,
+                ),
+            )
             conn.commit()
 
     def mark_password_reset_token_used(self, *, company_id: int, token_id: int, used_at: int) -> None:
@@ -276,5 +303,19 @@ class SqliteUserRepository:
                 CREATE INDEX IF NOT EXISTS prt_company_id_idx ON password_reset_tokens (company_id);
                 CREATE INDEX IF NOT EXISTS prt_user_id_idx ON password_reset_tokens (user_id);
                 CREATE INDEX IF NOT EXISTS prt_token_hash_idx ON password_reset_tokens (token_hash);
+
+                CREATE TABLE IF NOT EXISTS audit_logs (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  company_id INTEGER NOT NULL,
+                  branch_id INTEGER NULL,
+                  user_id INTEGER NULL,
+                  event_type TEXT NOT NULL,
+                  created_at INTEGER NOT NULL,
+                  metadata_json TEXT NULL,
+                  CONSTRAINT audit_logs_user_fk FOREIGN KEY (user_id) REFERENCES users (id)
+                );
+                CREATE INDEX IF NOT EXISTS audit_logs_company_id_idx ON audit_logs (company_id);
+                CREATE INDEX IF NOT EXISTS audit_logs_company_created_at_idx ON audit_logs (company_id, created_at);
+                CREATE INDEX IF NOT EXISTS audit_logs_user_id_idx ON audit_logs (user_id);
                 """
             )
