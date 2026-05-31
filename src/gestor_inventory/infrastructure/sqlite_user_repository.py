@@ -2,6 +2,7 @@ import sqlite3
 from contextlib import contextmanager
 
 from gestor_inventory.domain.errors import EmailAlreadyExistsError
+from gestor_inventory.domain.operational import Category
 from gestor_inventory.domain.rbac import Permission, Role
 from gestor_inventory.domain.user import User
 
@@ -462,6 +463,35 @@ class SqliteUserRepository:
                 Permission(id=int(perm_id), code=str(code_v), description=str(description) if description is not None else None)
                 for (perm_id, code_v, description) in rows
             ]
+
+    def create_category(self, *, company_id: int, name: str, is_active: bool) -> Category:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO categories (company_id, name, is_active)
+                VALUES (?, ?, ?)
+                """,
+                (int(company_id), str(name), 1 if is_active else 0),
+            )
+            category_id = int(cur.lastrowid)
+            conn.commit()
+            return Category(company_id=int(company_id), id=category_id, name=str(name), is_active=bool(is_active))
+
+    def get_category_by_id(self, *, company_id: int, category_id: int) -> Category | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT company_id, id, name, is_active
+                FROM categories
+                WHERE company_id = ? AND id = ?
+                LIMIT 1
+                """,
+                (int(company_id), int(category_id)),
+            ).fetchone()
+            if row is None:
+                return None
+            company_id_v, category_id_v, name, is_active = row
+            return Category(company_id=int(company_id_v), id=int(category_id_v), name=str(name), is_active=bool(is_active))
 
     def create_audit_log(
         self,

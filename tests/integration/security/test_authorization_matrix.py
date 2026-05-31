@@ -161,3 +161,22 @@ class AuthorizationIntegrationTests(unittest.TestCase):
         status, _ = self._get("/api/admin/does-not-exist", token=None)
         self.assertEqual(status, 403)
 
+    def test_operational_resource_isolation_category_by_company_id(self):
+        category_company2 = self.repo.create_category(company_id=2, name="Bebidas", is_active=True)
+
+        admin_company1 = self.users[(1, 12)]
+        token = self._token_for(user_id=admin_company1.id, company_id=1, email=admin_company1.email)
+        status, _ = self._get(f"/api/admin/categories/{category_company2.id}", token=token)
+        self.assertIn(status, (403, 404))
+
+    def test_operational_write_requires_permission(self):
+        almacenista_company1 = self.users[(1, 10)]
+        token = self._token_for(user_id=almacenista_company1.id, company_id=1, email=almacenista_company1.email)
+        status, _ = self._post("/api/admin/categories", {"name": "Lácteos"}, token=token)
+        self.assertEqual(status, 403)
+
+        admin_company1 = self.users[(1, 12)]
+        token_admin = self._token_for(user_id=admin_company1.id, company_id=1, email=admin_company1.email)
+        status_ok, body_ok = self._post("/api/admin/categories", {"name": "Lácteos"}, token=token_admin)
+        self.assertEqual(status_ok, 201)
+        self.assertEqual(body_ok.get("category", {}).get("company_id"), 1)

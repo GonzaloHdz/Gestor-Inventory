@@ -4,6 +4,12 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 
 from gestor_inventory.application.login_user import LoginRequest, login_user
+from gestor_inventory.application.categories import (
+    CreateCategoryRequest,
+    GetCategoryRequest,
+    create_category,
+    get_category,
+)
 from gestor_inventory.application.list_rbac import (
     ListRolesRequest,
     list_permissions,
@@ -49,6 +55,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/admin/permissions":
             self._handle_list_permissions()
             return
+        if parsed.path.startswith("/api/admin/categories/"):
+            self._handle_get_category(parsed.path)
+            return
         if parsed.path.startswith("/api/admin/"):
             self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": "Prohibido"})
             return
@@ -66,6 +75,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/admin/user-roles/revoke":
             self._handle_revoke_user_role()
+            return
+        if self.path == "/api/admin/categories":
+            self._handle_create_category()
             return
         if self.path == "/api/auth/password-reset/request":
             self._handle_password_reset_request()
@@ -228,6 +240,68 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                     {"id": p.id, "code": p.code, "description": p.description} for p in res.permissions
                 ]
             },
+        )
+
+    def _handle_get_category(self, path: str) -> None:
+        try:
+            authz = self._require_permissions({"productos:leer"})
+            if authz is None:
+                return
+            company_id = int(authz.get("company_id"))
+            raw_id = path.removeprefix("/api/admin/categories/").strip("/")
+            category_id = int(raw_id)
+            res = get_category(self.repo, GetCategoryRequest(company_id=company_id, category_id=category_id))
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except NotFoundError:
+            self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            return
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        c = res.category
+        self._send_json(
+            HTTPStatus.OK,
+            {"category": {"company_id": c.company_id, "id": c.id, "name": c.name, "is_active": c.is_active}},
+        )
+
+    def _handle_create_category(self) -> None:
+        try:
+            payload = self._read_json()
+            payload_company_id = payload.get("company_id")
+            authz = self._require_permissions(
+                {"productos:crear"},
+                company_id=(int(payload_company_id) if payload_company_id is not None else None),
+            )
+            if authz is None:
+                return
+            company_id = int(authz.get("company_id"))
+            res = create_category(self.repo, CreateCategoryRequest(company_id=company_id, name=payload["name"]))
+        except KeyError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except json.JSONDecodeError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        c = res.category
+        self._send_json(
+            HTTPStatus.CREATED,
+            {"category": {"company_id": c.company_id, "id": c.id, "name": c.name, "is_active": c.is_active}},
         )
 
     def _handle_password_reset_request(self) -> None:
