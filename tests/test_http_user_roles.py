@@ -46,6 +46,12 @@ class HttpUserRolesTests(unittest.TestCase):
             password_hash=password_hash,
             role_id=10,
         )
+        self.other_company_admin, _ = self.repo.create_user_with_role(
+            company_id=2,
+            email="admin2@example.com",
+            password_hash=password_hash,
+            role_id=12,
+        )
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), HttpApiHandler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -70,6 +76,19 @@ class HttpUserRolesTests(unittest.TestCase):
                 headers["Authorization"] = f"Bearer {token}"
             raw = json.dumps(body).encode("utf-8")
             conn.request("POST", path, body=raw, headers=headers)
+            resp = conn.getresponse()
+            data = resp.read()
+            return resp.status, ({} if not data else json.loads(data.decode("utf-8")))
+        finally:
+            conn.close()
+
+    def _get(self, path: str, token: str | None = None) -> tuple[int, dict]:
+        conn = http.client.HTTPConnection(self.base[0], self.base[1], timeout=2)
+        try:
+            headers = {}
+            if token is not None:
+                headers["Authorization"] = f"Bearer {token}"
+            conn.request("GET", path, headers=headers)
             resp = conn.getresponse()
             data = resp.read()
             return resp.status, ({} if not data else json.loads(data.decode("utf-8")))
@@ -146,6 +165,38 @@ class HttpUserRolesTests(unittest.TestCase):
         )
         self.assertEqual(status, 403)
         self.assertEqual(body.get("error"), "forbidden")
+
+    def test_list_roles_requires_permission(self):
+        token = self._token_for(user_id=self.normal_user.id, company_id=1, email=self.normal_user.email)
+        status, body = self._get("/api/admin/roles", token=token)
+        self.assertEqual(status, 403)
+        self.assertEqual(body.get("error"), "forbidden")
+
+    def test_list_roles_scoped_by_token_company(self):
+        token = self._token_for(user_id=self.admin_user.id, company_id=1, email=self.admin_user.email)
+        status, body = self._get("/api/admin/roles", token=token)
+        self.assertEqual(status, 200)
+        roles = body.get("roles")
+        self.assertIsInstance(roles, list)
+        self.assertGreaterEqual(len(roles), 1)
+        self.assertTrue(all(r.get("company_id") == 1 for r in roles))
+
+        token2 = self._token_for(user_id=self.other_company_admin.id, company_id=2, email=self.other_company_admin.email)
+        status2, body2 = self._get("/api/admin/roles", token=token2)
+        self.assertEqual(status2, 200)
+        roles2 = body2.get("roles")
+        self.assertIsInstance(roles2, list)
+        self.assertGreaterEqual(len(roles2), 1)
+        self.assertTrue(all(r.get("company_id") == 2 for r in roles2))
+
+    def test_list_permissions_returns_code_and_description(self):
+        token = self._token_for(user_id=self.admin_user.id, company_id=1, email=self.admin_user.email)
+        status, body = self._get("/api/admin/permissions", token=token)
+        self.assertEqual(status, 200)
+        perms = body.get("permissions")
+        self.assertIsInstance(perms, list)
+        self.assertTrue(any(p.get("code") == "roles:leer" for p in perms))
+        self.assertTrue(all("code" in p and "description" in p for p in perms))
 
 
 if __name__ == "__main__":

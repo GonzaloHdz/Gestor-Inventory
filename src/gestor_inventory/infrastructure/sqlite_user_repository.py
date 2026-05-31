@@ -2,6 +2,7 @@ import sqlite3
 from contextlib import contextmanager
 
 from gestor_inventory.domain.errors import EmailAlreadyExistsError
+from gestor_inventory.domain.rbac import Permission, Role
 from gestor_inventory.domain.user import User
 
 
@@ -389,6 +390,78 @@ class SqliteUserRepository:
                 (int(company_id), int(user_id)),
             ).fetchall()
             return [str(code) for (code,) in rows]
+
+    def get_role(self, *, company_id: int, role_id: int) -> Role | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT company_id, id, name, is_system
+                FROM roles
+                WHERE company_id = ? AND id = ?
+                LIMIT 1
+                """,
+                (int(company_id), int(role_id)),
+            ).fetchone()
+            if row is None:
+                return None
+            company_id_v, role_id_v, name, is_system = row
+            return Role(
+                company_id=int(company_id_v),
+                id=int(role_id_v),
+                name=str(name),
+                is_system=bool(is_system),
+            )
+
+    def list_roles(self, *, company_id: int) -> list[Role]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT company_id, id, name, is_system
+                FROM roles
+                WHERE company_id = ?
+                ORDER BY id
+                """,
+                (int(company_id),),
+            ).fetchall()
+            return [
+                Role(
+                    company_id=int(company_id_v),
+                    id=int(role_id_v),
+                    name=str(name),
+                    is_system=bool(is_system),
+                )
+                for (company_id_v, role_id_v, name, is_system) in rows
+            ]
+
+    def get_permission_by_code(self, *, code: str) -> Permission | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, code, description
+                FROM permissions
+                WHERE code = ?
+                LIMIT 1
+                """,
+                (str(code),),
+            ).fetchone()
+            if row is None:
+                return None
+            perm_id, code_v, description = row
+            return Permission(id=int(perm_id), code=str(code_v), description=str(description) if description is not None else None)
+
+    def list_permissions(self) -> list[Permission]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, code, description
+                FROM permissions
+                ORDER BY code
+                """
+            ).fetchall()
+            return [
+                Permission(id=int(perm_id), code=str(code_v), description=str(description) if description is not None else None)
+                for (perm_id, code_v, description) in rows
+            ]
 
     def create_audit_log(
         self,

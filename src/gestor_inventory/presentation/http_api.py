@@ -4,6 +4,11 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 
 from gestor_inventory.application.login_user import LoginRequest, login_user
+from gestor_inventory.application.list_rbac import (
+    ListRolesRequest,
+    list_permissions,
+    list_roles,
+)
 from gestor_inventory.application.manage_user_roles import (
     AssignUserRoleRequest,
     RevokeUserRoleRequest,
@@ -37,6 +42,12 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/auth/verify-email":
             self._handle_verify_email(parsed.query)
+            return
+        if parsed.path == "/api/admin/roles":
+            self._handle_list_roles()
+            return
+        if parsed.path == "/api/admin/permissions":
+            self._handle_list_permissions()
             return
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
 
@@ -167,6 +178,51 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             return
 
         self._send_json(HTTPStatus.OK, {"status": "ok"})
+
+    def _handle_list_roles(self) -> None:
+        try:
+            authz = self._require_permissions({"roles:leer"})
+            if authz is None:
+                return
+            company_id = int(authz.get("company_id"))
+            res = list_roles(self.repo, ListRolesRequest(company_id=company_id))
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "roles": [
+                    {"company_id": r.company_id, "id": r.id, "name": r.name, "is_system": r.is_system} for r in res.roles
+                ]
+            },
+        )
+
+    def _handle_list_permissions(self) -> None:
+        try:
+            authz = self._require_permissions({"roles:leer"})
+            if authz is None:
+                return
+            res = list_permissions(self.repo)
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "permissions": [
+                    {"id": p.id, "code": p.code, "description": p.description} for p in res.permissions
+                ]
+            },
+        )
 
     def _handle_password_reset_request(self) -> None:
         try:
