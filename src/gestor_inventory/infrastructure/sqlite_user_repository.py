@@ -43,6 +43,7 @@ class SqliteUserRepository:
         with self._connect() as conn:
             try:
                 conn.execute("BEGIN")
+                self._ensure_base_rbac(conn, company_id=company_id)
                 cur = conn.execute(
                     """
                     INSERT INTO users (company_id, email, password_hash, is_active, verified)
@@ -338,6 +339,76 @@ class SqliteUserRepository:
             if self._persistent_conn is None:
                 conn.close()
 
+    def _ensure_base_rbac(self, conn: sqlite3.Connection, *, company_id: int) -> None:
+        conn.executemany(
+            "INSERT OR IGNORE INTO roles (company_id, id, name, is_system) VALUES (?, ?, ?, 1)",
+            [
+                (int(company_id), 10, "Almacenista"),
+                (int(company_id), 11, "Supervisor"),
+                (int(company_id), 12, "Administrador"),
+                (int(company_id), 13, "Superadministrador"),
+            ],
+        )
+        conn.executemany(
+            "INSERT OR IGNORE INTO permissions (id, code, description) VALUES (?, ?, ?)",
+            [
+                (100, "usuarios:crear", "Crear usuarios"),
+                (101, "usuarios:listar", "Listar usuarios"),
+                (102, "usuarios:editar", "Editar usuarios"),
+                (103, "usuarios:eliminar", "Eliminar usuarios"),
+                (110, "roles:leer", "Leer roles"),
+                (111, "roles:modificar", "Crear/editar roles y asignaciones"),
+                (200, "inventario:leer", "Leer inventario"),
+                (201, "inventario:modificar", "Modificar inventario"),
+                (210, "movimientos:leer", "Leer movimientos de inventario"),
+                (211, "movimientos:crear", "Crear movimientos de inventario"),
+                (300, "productos:crear", "Crear productos"),
+                (301, "productos:leer", "Leer productos"),
+                (302, "productos:modificar", "Modificar productos"),
+                (303, "productos:eliminar", "Eliminar productos"),
+                (400, "proveedores:crear", "Crear proveedores"),
+                (401, "proveedores:leer", "Leer proveedores"),
+                (402, "proveedores:modificar", "Modificar proveedores"),
+                (403, "proveedores:eliminar", "Eliminar proveedores"),
+                (500, "compras:crear", "Crear órdenes de compra"),
+                (501, "compras:leer", "Leer órdenes de compra"),
+                (502, "compras:aprobar", "Aprobar órdenes de compra"),
+                (600, "reportes:leer", "Leer reportes"),
+                (700, "configuracion:modificar", "Modificar configuración"),
+            ],
+        )
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO role_permissions (company_id, role_id, permission_id)
+            SELECT r.company_id, r.id, p.id
+            FROM roles r
+            JOIN permissions p ON p.code IN ('inventario:leer', 'movimientos:leer', 'productos:leer')
+            WHERE r.name = 'Almacenista' AND r.company_id = ?
+            """,
+            (int(company_id),),
+        )
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO role_permissions (company_id, role_id, permission_id)
+            SELECT r.company_id, r.id, p.id
+            FROM roles r
+            JOIN permissions p
+              ON p.code IN ('inventario:leer', 'inventario:modificar', 'movimientos:leer', 'movimientos:crear', 'productos:leer', 'reportes:leer')
+            WHERE r.name = 'Supervisor' AND r.company_id = ?
+            """,
+            (int(company_id),),
+        )
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO role_permissions (company_id, role_id, permission_id)
+            SELECT r.company_id, r.id, p.id
+            FROM roles r
+            JOIN permissions p ON 1 = 1
+            WHERE r.name IN ('Administrador', 'Superadministrador') AND r.company_id = ?
+            """,
+            (int(company_id),),
+        )
+
     def _init_schema(self) -> None:
         with self._connect() as conn:
             conn.executescript(
@@ -353,16 +424,48 @@ class SqliteUserRepository:
                 );
                 CREATE INDEX IF NOT EXISTS users_company_id_idx ON users (company_id);
 
+                CREATE TABLE IF NOT EXISTS roles (
+                  company_id INTEGER NOT NULL,
+                  id INTEGER NOT NULL,
+                  name TEXT NOT NULL,
+                  is_system INTEGER NOT NULL DEFAULT 1,
+                  CONSTRAINT roles_pk PRIMARY KEY (company_id, id),
+                  CONSTRAINT roles_company_name_unique UNIQUE (company_id, name)
+                );
+                CREATE INDEX IF NOT EXISTS roles_company_id_idx ON roles (company_id);
+
+                CREATE TABLE IF NOT EXISTS permissions (
+                  id INTEGER PRIMARY KEY,
+                  code TEXT NOT NULL,
+                  description TEXT NULL,
+                  CONSTRAINT permissions_code_unique UNIQUE (code)
+                );
+
+                CREATE TABLE IF NOT EXISTS role_permissions (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  company_id INTEGER NOT NULL,
+                  role_id INTEGER NOT NULL,
+                  permission_id INTEGER NOT NULL,
+                  CONSTRAINT role_permissions_company_role_perm_unique UNIQUE (company_id, role_id, permission_id),
+                  CONSTRAINT role_permissions_role_fk FOREIGN KEY (company_id, role_id) REFERENCES roles (company_id, id),
+                  CONSTRAINT role_permissions_permission_fk FOREIGN KEY (permission_id) REFERENCES permissions (id)
+                );
+                CREATE INDEX IF NOT EXISTS role_permissions_company_id_idx ON role_permissions (company_id);
+                CREATE INDEX IF NOT EXISTS role_permissions_role_id_idx ON role_permissions (company_id, role_id);
+                CREATE INDEX IF NOT EXISTS role_permissions_permission_id_idx ON role_permissions (permission_id);
+
                 CREATE TABLE IF NOT EXISTS user_roles (
                   id INTEGER PRIMARY KEY AUTOINCREMENT,
                   company_id INTEGER NOT NULL,
                   user_id INTEGER NOT NULL,
                   role_id INTEGER NOT NULL,
                   CONSTRAINT user_roles_company_user_role_unique UNIQUE (company_id, user_id, role_id),
-                  CONSTRAINT user_roles_user_fk FOREIGN KEY (user_id) REFERENCES users (id)
+                  CONSTRAINT user_roles_user_fk FOREIGN KEY (user_id) REFERENCES users (id),
+                  CONSTRAINT user_roles_role_fk FOREIGN KEY (company_id, role_id) REFERENCES roles (company_id, id)
                 );
                 CREATE INDEX IF NOT EXISTS user_roles_company_id_idx ON user_roles (company_id);
                 CREATE INDEX IF NOT EXISTS user_roles_user_id_idx ON user_roles (user_id);
+                CREATE INDEX IF NOT EXISTS user_roles_role_id_idx ON user_roles (company_id, role_id);
 
                 CREATE TABLE IF NOT EXISTS password_reset_tokens (
                   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -407,5 +510,59 @@ class SqliteUserRepository:
                 CREATE INDEX IF NOT EXISTS audit_logs_company_id_idx ON audit_logs (company_id);
                 CREATE INDEX IF NOT EXISTS audit_logs_company_created_at_idx ON audit_logs (company_id, created_at);
                 CREATE INDEX IF NOT EXISTS audit_logs_user_id_idx ON audit_logs (user_id);
+
+                INSERT OR IGNORE INTO roles (company_id, id, name, is_system) VALUES
+                  (1, 10, 'Almacenista', 1),
+                  (1, 11, 'Supervisor', 1),
+                  (1, 12, 'Administrador', 1),
+                  (1, 13, 'Superadministrador', 1),
+                  (2, 10, 'Almacenista', 1),
+                  (2, 11, 'Supervisor', 1),
+                  (2, 12, 'Administrador', 1),
+                  (2, 13, 'Superadministrador', 1);
+
+                INSERT OR IGNORE INTO permissions (id, code, description) VALUES
+                  (100, 'usuarios:crear', 'Crear usuarios'),
+                  (101, 'usuarios:listar', 'Listar usuarios'),
+                  (102, 'usuarios:editar', 'Editar usuarios'),
+                  (103, 'usuarios:eliminar', 'Eliminar usuarios'),
+                  (110, 'roles:leer', 'Leer roles'),
+                  (111, 'roles:modificar', 'Crear/editar roles y asignaciones'),
+                  (200, 'inventario:leer', 'Leer inventario'),
+                  (201, 'inventario:modificar', 'Modificar inventario'),
+                  (210, 'movimientos:leer', 'Leer movimientos de inventario'),
+                  (211, 'movimientos:crear', 'Crear movimientos de inventario'),
+                  (300, 'productos:crear', 'Crear productos'),
+                  (301, 'productos:leer', 'Leer productos'),
+                  (302, 'productos:modificar', 'Modificar productos'),
+                  (303, 'productos:eliminar', 'Eliminar productos'),
+                  (400, 'proveedores:crear', 'Crear proveedores'),
+                  (401, 'proveedores:leer', 'Leer proveedores'),
+                  (402, 'proveedores:modificar', 'Modificar proveedores'),
+                  (403, 'proveedores:eliminar', 'Eliminar proveedores'),
+                  (500, 'compras:crear', 'Crear órdenes de compra'),
+                  (501, 'compras:leer', 'Leer órdenes de compra'),
+                  (502, 'compras:aprobar', 'Aprobar órdenes de compra'),
+                  (600, 'reportes:leer', 'Leer reportes'),
+                  (700, 'configuracion:modificar', 'Modificar configuración');
+
+                INSERT OR IGNORE INTO role_permissions (company_id, role_id, permission_id)
+                SELECT r.company_id, r.id, p.id
+                FROM roles r
+                JOIN permissions p ON p.code IN ('inventario:leer', 'movimientos:leer', 'productos:leer')
+                WHERE r.name = 'Almacenista' AND r.company_id IN (1, 2);
+
+                INSERT OR IGNORE INTO role_permissions (company_id, role_id, permission_id)
+                SELECT r.company_id, r.id, p.id
+                FROM roles r
+                JOIN permissions p
+                  ON p.code IN ('inventario:leer', 'inventario:modificar', 'movimientos:leer', 'movimientos:crear', 'productos:leer', 'reportes:leer')
+                WHERE r.name = 'Supervisor' AND r.company_id IN (1, 2);
+
+                INSERT OR IGNORE INTO role_permissions (company_id, role_id, permission_id)
+                SELECT r.company_id, r.id, p.id
+                FROM roles r
+                JOIN permissions p ON 1 = 1
+                WHERE r.name IN ('Administrador', 'Superadministrador') AND r.company_id IN (1, 2);
                 """
             )
