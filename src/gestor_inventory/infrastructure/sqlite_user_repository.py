@@ -598,6 +598,79 @@ class SqliteUserRepository:
                   CONSTRAINT users_company_email_unique UNIQUE (company_id, email)
                 );
                 CREATE INDEX IF NOT EXISTS users_company_id_idx ON users (company_id);
+                CREATE UNIQUE INDEX IF NOT EXISTS users_company_id_id_unique ON users (company_id, id);
+
+                CREATE TABLE IF NOT EXISTS branches (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  company_id INTEGER NOT NULL,
+                  name TEXT NOT NULL,
+                  address TEXT NULL,
+                  is_active INTEGER NOT NULL DEFAULT 1,
+                  CONSTRAINT branches_company_id_id_unique UNIQUE (company_id, id),
+                  CONSTRAINT branches_company_name_unique UNIQUE (company_id, name)
+                );
+                CREATE INDEX IF NOT EXISTS branches_company_id_idx ON branches (company_id);
+
+                CREATE TABLE IF NOT EXISTS categories (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  company_id INTEGER NOT NULL,
+                  name TEXT NOT NULL,
+                  is_active INTEGER NOT NULL DEFAULT 1,
+                  CONSTRAINT categories_company_id_id_unique UNIQUE (company_id, id),
+                  CONSTRAINT categories_company_name_unique UNIQUE (company_id, name)
+                );
+                CREATE INDEX IF NOT EXISTS categories_company_id_idx ON categories (company_id);
+
+                CREATE TABLE IF NOT EXISTS products (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  company_id INTEGER NOT NULL,
+                  category_id INTEGER NULL,
+                  sku TEXT NOT NULL,
+                  name TEXT NOT NULL,
+                  description TEXT NULL,
+                  is_active INTEGER NOT NULL DEFAULT 1,
+                  CONSTRAINT products_company_id_id_unique UNIQUE (company_id, id),
+                  CONSTRAINT products_company_sku_unique UNIQUE (company_id, sku),
+                  CONSTRAINT products_category_fk FOREIGN KEY (company_id, category_id) REFERENCES categories (company_id, id)
+                );
+                CREATE INDEX IF NOT EXISTS products_company_id_idx ON products (company_id);
+                CREATE INDEX IF NOT EXISTS products_company_category_id_idx ON products (company_id, category_id);
+
+                CREATE TABLE IF NOT EXISTS inventory_items (
+                  company_id INTEGER NOT NULL,
+                  branch_id INTEGER NOT NULL,
+                  product_id INTEGER NOT NULL,
+                  quantity INTEGER NOT NULL DEFAULT 0,
+                  min_quantity INTEGER NOT NULL DEFAULT 0,
+                  updated_at INTEGER NOT NULL,
+                  CONSTRAINT inventory_items_pk PRIMARY KEY (company_id, branch_id, product_id),
+                  CONSTRAINT inventory_items_branch_fk FOREIGN KEY (company_id, branch_id) REFERENCES branches (company_id, id),
+                  CONSTRAINT inventory_items_product_fk FOREIGN KEY (company_id, product_id) REFERENCES products (company_id, id)
+                );
+                CREATE INDEX IF NOT EXISTS inventory_items_company_id_idx ON inventory_items (company_id);
+                CREATE INDEX IF NOT EXISTS inventory_items_branch_id_idx ON inventory_items (company_id, branch_id);
+                CREATE INDEX IF NOT EXISTS inventory_items_product_id_idx ON inventory_items (company_id, product_id);
+
+                CREATE TABLE IF NOT EXISTS inventory_movements (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  company_id INTEGER NOT NULL,
+                  branch_id INTEGER NOT NULL,
+                  product_id INTEGER NOT NULL,
+                  user_id INTEGER NOT NULL,
+                  movement_type TEXT NOT NULL,
+                  quantity INTEGER NOT NULL,
+                  reference TEXT NULL,
+                  created_at INTEGER NOT NULL,
+                  CONSTRAINT inventory_movements_company_id_id_unique UNIQUE (company_id, id),
+                  CONSTRAINT inventory_movements_branch_fk FOREIGN KEY (company_id, branch_id) REFERENCES branches (company_id, id),
+                  CONSTRAINT inventory_movements_product_fk FOREIGN KEY (company_id, product_id) REFERENCES products (company_id, id),
+                  CONSTRAINT inventory_movements_user_fk FOREIGN KEY (company_id, user_id) REFERENCES users (company_id, id)
+                );
+                CREATE INDEX IF NOT EXISTS inventory_movements_company_id_idx ON inventory_movements (company_id);
+                CREATE INDEX IF NOT EXISTS inventory_movements_branch_id_idx ON inventory_movements (company_id, branch_id);
+                CREATE INDEX IF NOT EXISTS inventory_movements_product_id_idx ON inventory_movements (company_id, product_id);
+                CREATE INDEX IF NOT EXISTS inventory_movements_user_id_idx ON inventory_movements (company_id, user_id);
+                CREATE INDEX IF NOT EXISTS inventory_movements_created_at_idx ON inventory_movements (company_id, created_at);
 
                 CREATE TABLE IF NOT EXISTS roles (
                   company_id INTEGER NOT NULL,
