@@ -106,6 +106,16 @@ class AuthorizationIntegrationTests(unittest.TestCase):
         finally:
             conn.close()
 
+    def _data_audit_logs(self) -> list[dict]:
+        conn = self.repo._persistent_conn
+        rows = conn.execute(
+            "SELECT company_id, user_id, action, resource, details FROM audit_logs ORDER BY id"
+        ).fetchall()
+        return [
+            {"company_id": int(c), "user_id": int(u), "action": str(a), "resource": str(r), "details": d}
+            for (c, u, a, r, d) in rows
+        ]
+
     def test_matrix_access_by_role(self):
         matrix = [
             ("GET", "/api/admin/roles", None),
@@ -180,6 +190,8 @@ class AuthorizationIntegrationTests(unittest.TestCase):
         status_ok, body_ok = self._post("/api/admin/categories", {"name": "Lácteos"}, token=token_admin)
         self.assertEqual(status_ok, 201)
         self.assertEqual(body_ok.get("category", {}).get("company_id"), 1)
+        logs = self._data_audit_logs()
+        self.assertTrue(any(l["company_id"] == 1 and l["user_id"] == admin_company1.id and l["action"] == "CREATE" and l["resource"] == "categorias" for l in logs))
 
     def test_inventory_endpoint_requires_token_and_filters_by_company_and_branch(self):
         status_unauth, _ = self._get("/api/inventory?branch_id=1", token=None)
@@ -202,6 +214,20 @@ class AuthorizationIntegrationTests(unittest.TestCase):
         items = body_ok.get("items")
         self.assertIsInstance(items, list)
         self.assertTrue(all(i.get("company_id") == 1 and i.get("branch_id") == branch1.id for i in items))
+        logs = self._data_audit_logs()
+        self.assertTrue(any(l["company_id"] == 1 and l["user_id"] == admin_company1.id and l["action"] == "READ" and l["resource"] == "inventario" for l in logs))
 
         status_cross, _ = self._get(f"/api/inventory?branch_id={branch2_other.id}", token=token)
         self.assertEqual(status_cross, 404)
+
+    def test_role_assignment_is_audited(self):
+        admin_company1 = self.users[(1, 12)]
+        token = self._token_for(user_id=admin_company1.id, company_id=1, email=admin_company1.email)
+        status, _ = self._post(
+            "/api/admin/user-roles/assign",
+            {"company_id": 1, "user_id": self.target_company1.id, "role_id": 11},
+            token=token,
+        )
+        self.assertEqual(status, 200)
+        logs = self._data_audit_logs()
+        self.assertTrue(any(l["company_id"] == 1 and l["user_id"] == admin_company1.id and l["action"] == "CREATE" and l["resource"] == "roles" for l in logs))

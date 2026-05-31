@@ -575,6 +575,33 @@ class SqliteUserRepository:
                 (int(company_id), int(branch_id), int(product_id), int(quantity), int(min_quantity), int(now)),
             )
             conn.commit()
+
+    def create_data_audit_log(
+        self,
+        *,
+        company_id: int,
+        user_id: int,
+        action: str,
+        resource: str,
+        details: str | None,
+        timestamp: int,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO audit_logs (company_id, user_id, action, resource, details, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    int(company_id),
+                    int(user_id),
+                    str(action),
+                    str(resource),
+                    str(details) if details is not None else None,
+                    int(timestamp),
+                ),
+            )
+            conn.commit()
             return InventoryItem(
                 company_id=int(company_id),
                 branch_id=int(branch_id),
@@ -701,7 +728,7 @@ class SqliteUserRepository:
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO audit_logs (company_id, branch_id, user_id, event_type, created_at, metadata_json)
+                INSERT INTO auth_audit_logs (company_id, branch_id, user_id, event_type, created_at, metadata_json)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
@@ -970,7 +997,7 @@ class SqliteUserRepository:
                 CREATE INDEX IF NOT EXISTS evt_user_id_idx ON email_verification_tokens (user_id);
                 CREATE INDEX IF NOT EXISTS evt_token_hash_idx ON email_verification_tokens (token_hash);
 
-                CREATE TABLE IF NOT EXISTS audit_logs (
+                CREATE TABLE IF NOT EXISTS auth_audit_logs (
                   id INTEGER PRIMARY KEY AUTOINCREMENT,
                   company_id INTEGER NOT NULL,
                   branch_id INTEGER NULL,
@@ -980,9 +1007,24 @@ class SqliteUserRepository:
                   metadata_json TEXT NULL,
                   CONSTRAINT audit_logs_user_fk FOREIGN KEY (user_id) REFERENCES users (id)
                 );
+                CREATE INDEX IF NOT EXISTS auth_audit_logs_company_id_idx ON auth_audit_logs (company_id);
+                CREATE INDEX IF NOT EXISTS auth_audit_logs_company_created_at_idx ON auth_audit_logs (company_id, created_at);
+                CREATE INDEX IF NOT EXISTS auth_audit_logs_user_id_idx ON auth_audit_logs (user_id);
+
+                CREATE TABLE IF NOT EXISTS audit_logs (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  company_id INTEGER NOT NULL,
+                  user_id INTEGER NOT NULL,
+                  action TEXT NOT NULL,
+                  resource TEXT NOT NULL,
+                  details TEXT NULL,
+                  timestamp INTEGER NOT NULL,
+                  CONSTRAINT audit_logs_user_fk FOREIGN KEY (company_id, user_id) REFERENCES users (company_id, id)
+                );
                 CREATE INDEX IF NOT EXISTS audit_logs_company_id_idx ON audit_logs (company_id);
-                CREATE INDEX IF NOT EXISTS audit_logs_company_created_at_idx ON audit_logs (company_id, created_at);
-                CREATE INDEX IF NOT EXISTS audit_logs_user_id_idx ON audit_logs (user_id);
+                CREATE INDEX IF NOT EXISTS audit_logs_company_user_id_idx ON audit_logs (company_id, user_id);
+                CREATE INDEX IF NOT EXISTS audit_logs_company_resource_idx ON audit_logs (company_id, resource);
+                CREATE INDEX IF NOT EXISTS audit_logs_company_timestamp_idx ON audit_logs (company_id, timestamp);
 
                 INSERT OR IGNORE INTO roles (company_id, id, name, is_system) VALUES
                   (1, 10, 'Almacenista', 1),

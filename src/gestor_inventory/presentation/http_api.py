@@ -1,4 +1,5 @@
 import json
+import time
 from urllib.parse import parse_qs, urlparse
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
@@ -269,6 +270,12 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
             return
 
+        self._audit_data(
+            authz,
+            action="READ",
+            resource="inventario",
+            details=json.dumps({"branch_id": int(branch_id), "items": len(res.items)}, separators=(",", ":")),
+        )
         self._send_json(
             HTTPStatus.OK,
             {
@@ -343,6 +350,12 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             return
 
         c = res.category
+        self._audit_data(
+            authz,
+            action="CREATE",
+            resource="categorias",
+            details=json.dumps({"category_id": c.id, "name": c.name}, separators=(",", ":")),
+        )
         self._send_json(
             HTTPStatus.CREATED,
             {"category": {"company_id": c.company_id, "id": c.id, "name": c.name, "is_active": c.is_active}},
@@ -433,6 +446,15 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
             return
 
+        self._audit_data(
+            authz,
+            action="CREATE",
+            resource="roles",
+            details=json.dumps(
+                {"target_user_id": int(req.user_id), "role_id": int(req.role_id), "changed": bool(res.changed)},
+                separators=(",", ":"),
+            ),
+        )
         self._send_json(HTTPStatus.OK, {"status": "ok", "changed": res.changed})
 
     def _handle_revoke_user_role(self) -> None:
@@ -467,6 +489,15 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
             return
 
+        self._audit_data(
+            authz,
+            action="DELETE",
+            resource="roles",
+            details=json.dumps(
+                {"target_user_id": int(req.user_id), "role_id": int(req.role_id), "changed": bool(res.changed)},
+                separators=(",", ":"),
+            ),
+        )
         self._send_json(HTTPStatus.OK, {"status": "ok", "changed": res.changed})
 
     def log_message(self, format, *args):
@@ -525,6 +556,20 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             return None
 
         return payload
+
+    def _audit_data(self, authz_payload: dict, *, action: str, resource: str, details: str | None) -> None:
+        if not hasattr(self.repo, "create_data_audit_log"):
+            raise RuntimeError("audit repository not configured")
+        company_id = authz_payload.get("company_id")
+        sub = authz_payload.get("sub")
+        self.repo.create_data_audit_log(
+            company_id=int(company_id),
+            user_id=int(sub),
+            action=str(action),
+            resource=str(resource),
+            details=str(details) if details is not None else None,
+            timestamp=int(time.time()),
+        )
 
     def _read_json(self) -> dict:
         length = int(self.headers.get("Content-Length", "0"))
