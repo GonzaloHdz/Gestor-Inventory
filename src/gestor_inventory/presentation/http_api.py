@@ -11,6 +11,7 @@ from gestor_inventory.application.categories import (
     create_category,
     get_category,
 )
+from gestor_inventory.application.create_company import CreateCompanyRequest, create_company
 from gestor_inventory.application.inventory import ListInventoryRequest, list_inventory
 from gestor_inventory.application.list_rbac import (
     ListRolesRequest,
@@ -28,6 +29,7 @@ from gestor_inventory.application.register_user import RegisterUserRequest, regi
 from gestor_inventory.application.reset_password import ResetPasswordRequest, reset_password
 from gestor_inventory.application.verify_email import VerifyEmailRequest, verify_email
 from gestor_inventory.domain.errors import (
+    CompanyNameAlreadyExistsError,
     EmailAlreadyExistsError,
     InvalidCredentialsError,
     NotFoundError,
@@ -81,6 +83,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         if self.path == "/api/admin/user-roles/revoke":
             self._handle_revoke_user_role()
             return
+        if self.path == "/api/admin/companies":
+            self._handle_create_company()
+            return
         if self.path == "/api/admin/categories":
             self._handle_create_category()
             return
@@ -94,6 +99,52 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": "Prohibido"})
             return
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+
+    def _handle_create_company(self) -> None:
+        try:
+            payload = self._read_json()
+            authz = self._require_permissions({"empresas:crear"})
+            if authz is None:
+                return
+            res = create_company(
+                self.repo,
+                CreateCompanyRequest(
+                    name=payload["name"],
+                    currency=payload["currency"],
+                    timezone=payload["timezone"],
+                ),
+            )
+        except KeyError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except CompanyNameAlreadyExistsError:
+            self._send_json(HTTPStatus.CONFLICT, {"error": "company_name_exists"})
+            return
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except json.JSONDecodeError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._audit_data(
+            authz,
+            action="CREATE",
+            resource="empresas",
+            details=json.dumps(
+                {
+                    "new_company_id": res.company.id,
+                    "name": res.company.name,
+                    "currency": res.company.currency,
+                    "timezone": res.company.timezone,
+                },
+                separators=(",", ":"),
+            ),
+        )
+        self._send_json(HTTPStatus.CREATED, {"company_id": res.company.id})
 
     def _handle_register(self) -> None:
         try:

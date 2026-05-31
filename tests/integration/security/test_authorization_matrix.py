@@ -116,6 +116,11 @@ class AuthorizationIntegrationTests(unittest.TestCase):
             for (c, u, a, r, d) in rows
         ]
 
+    def _companies(self) -> list[dict]:
+        conn = self.repo._persistent_conn
+        rows = conn.execute("SELECT id, name, currency, timezone FROM companies ORDER BY id").fetchall()
+        return [{"id": int(i), "name": str(n), "currency": str(c), "timezone": str(t)} for (i, n, c, t) in rows]
+
     def test_matrix_access_by_role(self):
         matrix = [
             ("GET", "/api/admin/roles", None),
@@ -231,3 +236,45 @@ class AuthorizationIntegrationTests(unittest.TestCase):
         self.assertEqual(status, 200)
         logs = self._data_audit_logs()
         self.assertTrue(any(l["company_id"] == 1 and l["user_id"] == admin_company1.id and l["action"] == "CREATE" and l["resource"] == "roles" for l in logs))
+
+    def test_create_company_requires_superadmin_permission(self):
+        admin_company1 = self.users[(1, 12)]
+        token = self._token_for(user_id=admin_company1.id, company_id=1, email=admin_company1.email)
+        status, _ = self._post(
+            "/api/admin/companies",
+            {"name": "Empresa X", "currency": "USD", "timezone": "UTC"},
+            token=token,
+        )
+        self.assertEqual(status, 403)
+
+    def test_create_company_success_and_audit(self):
+        superadmin_company1 = self.users[(1, 13)]
+        token = self._token_for(user_id=superadmin_company1.id, company_id=1, email=superadmin_company1.email)
+        status, body = self._post(
+            "/api/admin/companies",
+            {"name": "Empresa Nueva", "currency": "USD", "timezone": "UTC"},
+            token=token,
+        )
+        self.assertEqual(status, 201)
+        self.assertIsInstance(body.get("company_id"), int)
+        companies = self._companies()
+        self.assertTrue(any(c["name"] == "Empresa Nueva" for c in companies))
+        logs = self._data_audit_logs()
+        self.assertTrue(any(l["company_id"] == 1 and l["user_id"] == superadmin_company1.id and l["action"] == "CREATE" and l["resource"] == "empresas" for l in logs))
+
+    def test_create_company_duplicate_name_conflict(self):
+        superadmin_company1 = self.users[(1, 13)]
+        token = self._token_for(user_id=superadmin_company1.id, company_id=1, email=superadmin_company1.email)
+        status1, _ = self._post(
+            "/api/admin/companies",
+            {"name": "Empresa Duplicada", "currency": "USD", "timezone": "UTC"},
+            token=token,
+        )
+        self.assertEqual(status1, 201)
+        status2, body2 = self._post(
+            "/api/admin/companies",
+            {"name": "Empresa Duplicada", "currency": "USD", "timezone": "UTC"},
+            token=token,
+        )
+        self.assertEqual(status2, 409)
+        self.assertEqual(body2.get("error"), "company_name_exists")

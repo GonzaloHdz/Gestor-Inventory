@@ -14,6 +14,10 @@ class NotFoundError(Exception):
     pass
 
 
+class CompanyNameAlreadyExistsError(Exception):
+    pass
+
+
 class EmailAlreadyExistsError(Exception):
     pass
 

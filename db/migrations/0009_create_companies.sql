@@ -3,7 +3,7 @@ CREATE TABLE companies (
   name TEXT NOT NULL,
   currency TEXT NOT NULL,
   timezone TEXT NOT NULL,
-  created_at BIGINT NOT NULL,
+  created_at BIGINT NOT NULL DEFAULT (EXTRACT(EPOCH FROM NOW())::BIGINT),
   CONSTRAINT companies_name_unique UNIQUE (name)
 );
 

@@ -3,6 +3,7 @@ from contextlib import contextmanager
 import time
 
 from gestor_inventory.domain.errors import EmailAlreadyExistsError
+from gestor_inventory.domain.company import Company
 from gestor_inventory.domain.operational import Branch, InventoryItem, InventoryMovement, Product
 from gestor_inventory.domain.operational import Category
 from gestor_inventory.domain.rbac import Permission, Role
@@ -553,6 +554,24 @@ class SqliteUserRepository:
                 is_active=bool(is_active),
             )
 
+    def company_name_exists(self, *, name: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute("SELECT 1 FROM companies WHERE name = ? LIMIT 1", (str(name),)).fetchone()
+            return row is not None
+
+    def create_company(self, *, name: str, currency: str, timezone: str, created_at: int) -> Company:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO companies (name, currency, timezone, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (str(name), str(currency), str(timezone), int(created_at)),
+            )
+            company_id = int(cur.lastrowid)
+            conn.commit()
+            return Company(id=company_id, name=str(name), currency=str(currency), timezone=str(timezone), created_at=int(created_at))
+
     def upsert_inventory_item(
         self,
         *,
@@ -802,6 +821,7 @@ class SqliteUserRepository:
                 (502, "compras:aprobar", "Aprobar órdenes de compra"),
                 (600, "reportes:leer", "Leer reportes"),
                 (700, "configuracion:modificar", "Modificar configuración"),
+                (800, "empresas:crear", "Crear empresas"),
             ],
         )
         conn.execute(
@@ -830,8 +850,18 @@ class SqliteUserRepository:
             INSERT OR IGNORE INTO role_permissions (company_id, role_id, permission_id)
             SELECT r.company_id, r.id, p.id
             FROM roles r
+            JOIN permissions p ON p.code <> 'empresas:crear'
+            WHERE r.name = 'Administrador' AND r.company_id = ?
+            """,
+            (int(company_id),),
+        )
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO role_permissions (company_id, role_id, permission_id)
+            SELECT r.company_id, r.id, p.id
+            FROM roles r
             JOIN permissions p ON 1 = 1
-            WHERE r.name IN ('Administrador', 'Superadministrador') AND r.company_id = ?
+            WHERE r.name = 'Superadministrador' AND r.company_id = ?
             """,
             (int(company_id),),
         )
@@ -840,6 +870,16 @@ class SqliteUserRepository:
         with self._connect() as conn:
             conn.executescript(
                 """
+                CREATE TABLE IF NOT EXISTS companies (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  name TEXT NOT NULL,
+                  currency TEXT NOT NULL,
+                  timezone TEXT NOT NULL,
+                  created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+                  CONSTRAINT companies_name_unique UNIQUE (name)
+                );
+                CREATE INDEX IF NOT EXISTS companies_created_at_idx ON companies (created_at);
+
                 CREATE TABLE IF NOT EXISTS users (
                   id INTEGER PRIMARY KEY AUTOINCREMENT,
                   company_id INTEGER NOT NULL,
@@ -1059,7 +1099,8 @@ class SqliteUserRepository:
                   (501, 'compras:leer', 'Leer órdenes de compra'),
                   (502, 'compras:aprobar', 'Aprobar órdenes de compra'),
                   (600, 'reportes:leer', 'Leer reportes'),
-                  (700, 'configuracion:modificar', 'Modificar configuración');
+                  (700, 'configuracion:modificar', 'Modificar configuración'),
+                  (800, 'empresas:crear', 'Crear empresas');
 
                 INSERT OR IGNORE INTO role_permissions (company_id, role_id, permission_id)
                 SELECT r.company_id, r.id, p.id
@@ -1077,7 +1118,13 @@ class SqliteUserRepository:
                 INSERT OR IGNORE INTO role_permissions (company_id, role_id, permission_id)
                 SELECT r.company_id, r.id, p.id
                 FROM roles r
+                JOIN permissions p ON p.code <> 'empresas:crear'
+                WHERE r.name = 'Administrador' AND r.company_id IN (1, 2);
+
+                INSERT OR IGNORE INTO role_permissions (company_id, role_id, permission_id)
+                SELECT r.company_id, r.id, p.id
+                FROM roles r
                 JOIN permissions p ON 1 = 1
-                WHERE r.name IN ('Administrador', 'Superadministrador') AND r.company_id IN (1, 2);
+                WHERE r.name = 'Superadministrador' AND r.company_id IN (1, 2);
                 """
             )
