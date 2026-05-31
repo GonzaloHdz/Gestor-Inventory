@@ -1,7 +1,9 @@
 import sqlite3
 from contextlib import contextmanager
+import time
 
 from gestor_inventory.domain.errors import EmailAlreadyExistsError
+from gestor_inventory.domain.operational import Branch, InventoryItem, InventoryMovement, Product
 from gestor_inventory.domain.operational import Category
 from gestor_inventory.domain.rbac import Permission, Role
 from gestor_inventory.domain.user import User
@@ -492,6 +494,199 @@ class SqliteUserRepository:
                 return None
             company_id_v, category_id_v, name, is_active = row
             return Category(company_id=int(company_id_v), id=int(category_id_v), name=str(name), is_active=bool(is_active))
+
+    def create_branch(self, *, company_id: int, name: str, address: str | None, is_active: bool) -> Branch:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO branches (company_id, name, address, is_active)
+                VALUES (?, ?, ?, ?)
+                """,
+                (int(company_id), str(name), str(address) if address is not None else None, 1 if is_active else 0),
+            )
+            branch_id = int(cur.lastrowid)
+            conn.commit()
+            return Branch(company_id=int(company_id), id=branch_id, name=str(name), address=address, is_active=bool(is_active))
+
+    def branch_belongs_to_company(self, *, company_id: int, branch_id: int) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM branches WHERE company_id = ? AND id = ? LIMIT 1",
+                (int(company_id), int(branch_id)),
+            ).fetchone()
+            return row is not None
+
+    def create_product(
+        self,
+        *,
+        company_id: int,
+        category_id: int | None,
+        sku: str,
+        name: str,
+        description: str | None,
+        is_active: bool,
+    ) -> Product:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO products (company_id, category_id, sku, name, description, is_active)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    int(company_id),
+                    int(category_id) if category_id is not None else None,
+                    str(sku),
+                    str(name),
+                    str(description) if description is not None else None,
+                    1 if is_active else 0,
+                ),
+            )
+            product_id = int(cur.lastrowid)
+            conn.commit()
+            return Product(
+                company_id=int(company_id),
+                id=product_id,
+                category_id=int(category_id) if category_id is not None else None,
+                sku=str(sku),
+                name=str(name),
+                description=description,
+                is_active=bool(is_active),
+            )
+
+    def upsert_inventory_item(
+        self,
+        *,
+        company_id: int,
+        branch_id: int,
+        product_id: int,
+        quantity: int,
+        min_quantity: int,
+        updated_at: int | None = None,
+    ) -> InventoryItem:
+        with self._connect() as conn:
+            now = int(time.time()) if updated_at is None else int(updated_at)
+            conn.execute(
+                """
+                INSERT INTO inventory_items (company_id, branch_id, product_id, quantity, min_quantity, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(company_id, branch_id, product_id)
+                DO UPDATE SET quantity = excluded.quantity, min_quantity = excluded.min_quantity, updated_at = excluded.updated_at
+                """,
+                (int(company_id), int(branch_id), int(product_id), int(quantity), int(min_quantity), int(now)),
+            )
+            conn.commit()
+            return InventoryItem(
+                company_id=int(company_id),
+                branch_id=int(branch_id),
+                product_id=int(product_id),
+                quantity=int(quantity),
+                min_quantity=int(min_quantity),
+                updated_at=int(now),
+            )
+
+    def list_inventory_items(self, *, company_id: int, branch_id: int) -> list[InventoryItem]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT company_id, branch_id, product_id, quantity, min_quantity, updated_at
+                FROM inventory_items
+                WHERE company_id = ? AND branch_id = ?
+                ORDER BY product_id
+                """,
+                (int(company_id), int(branch_id)),
+            ).fetchall()
+            return [
+                InventoryItem(
+                    company_id=int(company_id_v),
+                    branch_id=int(branch_id_v),
+                    product_id=int(product_id),
+                    quantity=int(quantity),
+                    min_quantity=int(min_quantity),
+                    updated_at=int(updated_at),
+                )
+                for (company_id_v, branch_id_v, product_id, quantity, min_quantity, updated_at) in rows
+            ]
+
+    def create_inventory_movement(
+        self,
+        *,
+        company_id: int,
+        branch_id: int,
+        product_id: int,
+        user_id: int,
+        movement_type: str,
+        quantity: int,
+        reference: str | None,
+        created_at: int | None = None,
+    ) -> InventoryMovement:
+        with self._connect() as conn:
+            now = int(time.time()) if created_at is None else int(created_at)
+            cur = conn.execute(
+                """
+                INSERT INTO inventory_movements (company_id, branch_id, product_id, user_id, movement_type, quantity, reference, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    int(company_id),
+                    int(branch_id),
+                    int(product_id),
+                    int(user_id),
+                    str(movement_type),
+                    int(quantity),
+                    str(reference) if reference is not None else None,
+                    int(now),
+                ),
+            )
+            movement_id = int(cur.lastrowid)
+            conn.commit()
+            return InventoryMovement(
+                company_id=int(company_id),
+                id=movement_id,
+                branch_id=int(branch_id),
+                product_id=int(product_id),
+                user_id=int(user_id),
+                movement_type=str(movement_type),
+                quantity=int(quantity),
+                reference=reference,
+                created_at=int(now),
+            )
+
+    def list_inventory_movements(self, *, company_id: int, branch_id: int, limit: int) -> list[InventoryMovement]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT company_id, id, branch_id, product_id, user_id, movement_type, quantity, reference, created_at
+                FROM inventory_movements
+                WHERE company_id = ? AND branch_id = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT ?
+                """,
+                (int(company_id), int(branch_id), int(limit)),
+            ).fetchall()
+            return [
+                InventoryMovement(
+                    company_id=int(company_id_v),
+                    id=int(movement_id),
+                    branch_id=int(branch_id_v),
+                    product_id=int(product_id),
+                    user_id=int(user_id),
+                    movement_type=str(movement_type),
+                    quantity=int(quantity),
+                    reference=str(reference) if reference is not None else None,
+                    created_at=int(created_at),
+                )
+                for (
+                    company_id_v,
+                    movement_id,
+                    branch_id_v,
+                    product_id,
+                    user_id,
+                    movement_type,
+                    quantity,
+                    reference,
+                    created_at,
+                ) in rows
+            ]
 
     def create_audit_log(
         self,

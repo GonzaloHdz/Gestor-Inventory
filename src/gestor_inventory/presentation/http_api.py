@@ -10,6 +10,7 @@ from gestor_inventory.application.categories import (
     create_category,
     get_category,
 )
+from gestor_inventory.application.inventory import ListInventoryRequest, list_inventory
 from gestor_inventory.application.list_rbac import (
     ListRolesRequest,
     list_permissions,
@@ -48,6 +49,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/auth/verify-email":
             self._handle_verify_email(parsed.query)
+            return
+        if parsed.path == "/api/inventory":
+            self._handle_list_inventory(parsed.query)
             return
         if parsed.path == "/api/admin/roles":
             self._handle_list_roles()
@@ -238,6 +242,46 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             {
                 "permissions": [
                     {"id": p.id, "code": p.code, "description": p.description} for p in res.permissions
+                ]
+            },
+        )
+
+    def _handle_list_inventory(self, query: str) -> None:
+        try:
+            authz = self._require_permissions({"inventario:leer"})
+            if authz is None:
+                return
+            company_id = int(authz.get("company_id"))
+            params = parse_qs(query, keep_blank_values=True)
+            branch_id_raw = (params.get("branch_id") or [None])[0]
+            branch_id = int(branch_id_raw)
+            res = list_inventory(self.repo, ListInventoryRequest(company_id=company_id, branch_id=branch_id))
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except NotFoundError:
+            self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            return
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "items": [
+                    {
+                        "company_id": i.company_id,
+                        "branch_id": i.branch_id,
+                        "product_id": i.product_id,
+                        "quantity": i.quantity,
+                        "min_quantity": i.min_quantity,
+                        "updated_at": i.updated_at,
+                    }
+                    for i in res.items
                 ]
             },
         )

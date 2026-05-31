@@ -180,3 +180,28 @@ class AuthorizationIntegrationTests(unittest.TestCase):
         status_ok, body_ok = self._post("/api/admin/categories", {"name": "Lácteos"}, token=token_admin)
         self.assertEqual(status_ok, 201)
         self.assertEqual(body_ok.get("category", {}).get("company_id"), 1)
+
+    def test_inventory_endpoint_requires_token_and_filters_by_company_and_branch(self):
+        status_unauth, _ = self._get("/api/inventory?branch_id=1", token=None)
+        self.assertEqual(status_unauth, 401)
+
+        admin_company1 = self.users[(1, 12)]
+        token = self._token_for(user_id=admin_company1.id, company_id=1, email=admin_company1.email)
+
+        branch1 = self.repo.create_branch(company_id=1, name="Casa Central", address=None, is_active=True)
+        branch2_other = self.repo.create_branch(company_id=2, name="Sucursal 2", address=None, is_active=True)
+        product = self.repo.create_product(
+            company_id=1, category_id=None, sku="SKU-1", name="Prod 1", description=None, is_active=True
+        )
+        self.repo.upsert_inventory_item(
+            company_id=1, branch_id=branch1.id, product_id=product.id, quantity=5, min_quantity=0, updated_at=123
+        )
+
+        status_ok, body_ok = self._get(f"/api/inventory?branch_id={branch1.id}", token=token)
+        self.assertEqual(status_ok, 200)
+        items = body_ok.get("items")
+        self.assertIsInstance(items, list)
+        self.assertTrue(all(i.get("company_id") == 1 and i.get("branch_id") == branch1.id for i in items))
+
+        status_cross, _ = self._get(f"/api/inventory?branch_id={branch2_other.id}", token=token)
+        self.assertEqual(status_cross, 404)
