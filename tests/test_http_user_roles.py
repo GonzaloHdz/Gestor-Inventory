@@ -198,6 +198,11 @@ class HttpUserRolesTests(unittest.TestCase):
         self.assertTrue(any(p.get("code") == "roles:leer" for p in perms))
         self.assertTrue(all("code" in p and "description" in p for p in perms))
 
+    def test_unknown_admin_endpoint_is_denied_by_default(self):
+        status, body = self._get("/api/admin/unknown", token=None)
+        self.assertEqual(status, 403)
+        self.assertEqual(body.get("error"), "forbidden")
+
 
 if __name__ == "__main__":
     unittest.main()

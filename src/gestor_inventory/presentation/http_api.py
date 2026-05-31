@@ -49,6 +49,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/admin/permissions":
             self._handle_list_permissions()
             return
+        if parsed.path.startswith("/api/admin/"):
+            self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": "Prohibido"})
+            return
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
 
     def do_POST(self):
@@ -69,6 +72,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/auth/password-reset/confirm":
             self._handle_password_reset_confirm()
+            return
+        if self.path.startswith("/api/admin/"):
+            self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": "Prohibido"})
             return
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
 
