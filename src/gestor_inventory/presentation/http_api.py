@@ -45,6 +45,21 @@ class HttpApiHandler(BaseHTTPRequestHandler):
     jwt_secret = None
     jwt_expiration_minutes = 60
 
+    def end_headers(self):
+        origin = self.headers.get("Origin")
+        if origin == "http://127.0.0.1:5500":
+            self.send_header("Access-Control-Allow-Origin", origin)
+        else:
+            self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        super().end_headers()
+
+    def do_OPTIONS(self):
+        self.send_response(HTTPStatus.NO_CONTENT.value)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def do_GET(self):
         parsed = urlparse(self.path)
         if parsed.path == "/api/auth/me":
