@@ -2,7 +2,7 @@ import sqlite3
 from contextlib import contextmanager
 import time
 
-from gestor_inventory.domain.errors import EmailAlreadyExistsError
+from gestor_inventory.domain.errors import EmailAlreadyExistsError, ValidationError
 from gestor_inventory.domain.company import Company
 from gestor_inventory.domain.operational import Branch, InventoryItem, InventoryMovement, Product
 from gestor_inventory.domain.operational import Category
@@ -554,6 +554,38 @@ class SqliteUserRepository:
                 is_active=bool(is_active),
             )
 
+    def list_products(self, *, company_id: int) -> list[Product]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT company_id, id, category_id, sku, name, description, is_active
+                FROM products
+                WHERE company_id = ?
+                ORDER BY id DESC
+                """,
+                (int(company_id),),
+            ).fetchall()
+            return [
+                Product(
+                    company_id=int(row_company_id),
+                    id=int(product_id),
+                    category_id=int(category_id) if category_id is not None else None,
+                    sku=str(sku),
+                    name=str(name),
+                    description=str(description) if description is not None else None,
+                    is_active=bool(is_active),
+                )
+                for (row_company_id, product_id, category_id, sku, name, description, is_active) in rows
+            ]
+
+    def product_belongs_to_company(self, *, company_id: int, product_id: int) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM products WHERE company_id = ? AND id = ? LIMIT 1",
+                (int(company_id), int(product_id)),
+            ).fetchone()
+            return row is not None
+
     def company_name_exists(self, *, name: str) -> bool:
         with self._connect() as conn:
             row = conn.execute("SELECT 1 FROM companies WHERE name = ? LIMIT 1", (str(name),)).fetchone()
@@ -695,6 +727,93 @@ class SqliteUserRepository:
                 quantity=int(quantity),
                 reference=reference,
                 created_at=int(now),
+            )
+
+    def register_inventory_movement(
+        self,
+        *,
+        company_id: int,
+        branch_id: int,
+        product_id: int,
+        user_id: int,
+        movement_type: str,
+        quantity: int,
+        reference: str | None,
+    ) -> tuple[InventoryItem, InventoryMovement]:
+        with self._connect() as conn:
+            now = int(time.time())
+            conn.execute("BEGIN")
+            try:
+                row = conn.execute(
+                    """
+                    SELECT quantity, min_quantity, updated_at
+                    FROM inventory_items
+                    WHERE company_id = ? AND branch_id = ? AND product_id = ?
+                    LIMIT 1
+                    """,
+                    (int(company_id), int(branch_id), int(product_id)),
+                ).fetchone()
+
+                current_quantity = int(row[0]) if row is not None else 0
+                min_quantity = int(row[1]) if row is not None else 0
+                delta = int(quantity) if str(movement_type) == "entrada" else -int(quantity)
+                new_quantity = current_quantity + delta
+
+                if new_quantity < 0:
+                    raise ValidationError("stock insuficiente")
+
+                conn.execute(
+                    """
+                    INSERT INTO inventory_items (company_id, branch_id, product_id, quantity, min_quantity, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(company_id, branch_id, product_id)
+                    DO UPDATE SET quantity = excluded.quantity, min_quantity = excluded.min_quantity, updated_at = excluded.updated_at
+                    """,
+                    (int(company_id), int(branch_id), int(product_id), int(new_quantity), int(min_quantity), int(now)),
+                )
+
+                cur = conn.execute(
+                    """
+                    INSERT INTO inventory_movements (company_id, branch_id, product_id, user_id, movement_type, quantity, reference, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        int(company_id),
+                        int(branch_id),
+                        int(product_id),
+                        int(user_id),
+                        str(movement_type),
+                        int(quantity),
+                        str(reference) if reference is not None else None,
+                        int(now),
+                    ),
+                )
+                movement_id = int(cur.lastrowid)
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+
+            return (
+                InventoryItem(
+                    company_id=int(company_id),
+                    branch_id=int(branch_id),
+                    product_id=int(product_id),
+                    quantity=int(new_quantity),
+                    min_quantity=int(min_quantity),
+                    updated_at=int(now),
+                ),
+                InventoryMovement(
+                    company_id=int(company_id),
+                    id=movement_id,
+                    branch_id=int(branch_id),
+                    product_id=int(product_id),
+                    user_id=int(user_id),
+                    movement_type=str(movement_type),
+                    quantity=int(quantity),
+                    reference=reference,
+                    created_at=int(now),
+                ),
             )
 
     def list_inventory_movements(self, *, company_id: int, branch_id: int, limit: int) -> list[InventoryMovement]:
