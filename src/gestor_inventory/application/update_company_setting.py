@@ -1,8 +1,8 @@
-import json
 import time
 from dataclasses import dataclass
 from typing import Protocol
 
+from gestor_inventory.domain.company import normalize_company_setting_value
 from gestor_inventory.domain.errors import ValidationError
 
 
@@ -29,7 +29,7 @@ def update_company_settings(
 
     for raw_key, raw_value in req.settings.items():
         key = _validate_key(raw_key)
-        value = _normalize_value(raw_value)
+        value = normalize_company_setting_value(setting_key=key, raw_value=raw_value)
         repo.upsert_company_setting(company_id=company_id, setting_key=key, setting_value=value, now=now_v)
 
 
@@ -48,9 +48,3 @@ def _validate_key(key: object) -> str:
     if len(v) > 128:
         raise ValidationError("setting_key inválido")
     return v
-
-
-def _normalize_value(value: object) -> str:
-    if isinstance(value, str):
-        return value
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))

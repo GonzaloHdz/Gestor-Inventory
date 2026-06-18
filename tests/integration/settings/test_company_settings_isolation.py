@@ -142,6 +142,46 @@ class CompanySettingsIsolationIntegrationTests(unittest.TestCase):
         ).fetchall()
         self.assertTrue(any(int(c) == 1 and int(u) == self.admin_a.id and str(a) == "UPDATE" for (c, u, a, _) in logs))
 
+    def test_settings_validation_rejects_unknown_key(self):
+        token_a = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
+        status, body = self._put("/api/admin/settings", {"llave_falsa": "123"}, token=token_a)
+        self.assertEqual(status, 400)
+        self.assertEqual(body.get("error"), "validation_error")
+        self.assertIn("llave_falsa", str(body.get("message", "")))
+
+    def test_settings_validation_rejects_invalid_value(self):
+        token_a = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
+        status, body = self._put("/api/admin/settings", {"stock_minimo": "letras"}, token=token_a)
+        self.assertEqual(status, 400)
+        self.assertEqual(body.get("error"), "validation_error")
+        self.assertIn("stock_minimo", str(body.get("message", "")))
+
+    def test_settings_validation_accepts_known_keys(self):
+        token_a = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
+        status, _ = self._put(
+            "/api/admin/settings",
+            {"moneda": "mxn", "stock_minimo": 5, "notificaciones_activas": False},
+            token=token_a,
+        )
+        self.assertEqual(status, 200)
+
+        conn = self.repo._persistent_conn
+        moneda = conn.execute(
+            "SELECT setting_value FROM company_settings WHERE company_id = 1 AND setting_key = ?",
+            ("moneda",),
+        ).fetchone()
+        stock_minimo = conn.execute(
+            "SELECT setting_value FROM company_settings WHERE company_id = 1 AND setting_key = ?",
+            ("stock_minimo",),
+        ).fetchone()
+        notificaciones = conn.execute(
+            "SELECT setting_value FROM company_settings WHERE company_id = 1 AND setting_key = ?",
+            ("notificaciones_activas",),
+        ).fetchone()
+        self.assertEqual(str(moneda[0]), "MXN")
+        self.assertEqual(str(stock_minimo[0]), "5")
+        self.assertEqual(str(notificaciones[0]), "false")
+
 
 if __name__ == "__main__":
     unittest.main()
