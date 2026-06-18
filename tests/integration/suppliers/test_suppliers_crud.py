@@ -144,6 +144,115 @@ class SuppliersCrudIntegrationTests(unittest.TestCase):
         status, _ = self._post("/api/admin/suppliers", {"name": "Proveedor X"}, token=token)
         self.assertEqual(status, 403)
 
+    def test_multi_tenant_isolation_create_and_list_never_leaks(self):
+        token_a = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
+        token_b = self._token_for(user_id=self.admin_b.id, company_id=2, email=self.admin_b.email)
+
+        status_a, body_a = self._post(
+            "/api/admin/suppliers",
+            {"company_id": 2, "name": "Proveedor A HTTP", "document_id": "DOC-A-HTTP"},
+            token=token_a,
+        )
+        self.assertEqual(status_a, 201)
+        supplier_a = body_a.get("supplier", {})
+        supplier_a_id = int(supplier_a.get("id"))
+        self.assertEqual(int(supplier_a.get("company_id")), 1)
+
+        status_b, body_b = self._post(
+            "/api/admin/suppliers",
+            {"company_id": 1, "name": "Proveedor B HTTP", "document_id": "DOC-B-HTTP"},
+            token=token_b,
+        )
+        self.assertEqual(status_b, 201)
+        supplier_b = body_b.get("supplier", {})
+        supplier_b_id = int(supplier_b.get("id"))
+        self.assertEqual(int(supplier_b.get("company_id")), 2)
+
+        row_a = self.repo._persistent_conn.execute(
+            "SELECT company_id FROM suppliers WHERE id = ? LIMIT 1",
+            (int(supplier_a_id),),
+        ).fetchone()
+        self.assertIsNotNone(row_a)
+        self.assertEqual(int(row_a[0]), 1)
+
+        row_b = self.repo._persistent_conn.execute(
+            "SELECT company_id FROM suppliers WHERE id = ? LIMIT 1",
+            (int(supplier_b_id),),
+        ).fetchone()
+        self.assertIsNotNone(row_b)
+        self.assertEqual(int(row_b[0]), 2)
+
+        status_list_a, body_list_a = self._get("/api/admin/suppliers", token=token_a)
+        self.assertEqual(status_list_a, 200)
+        data_a = body_list_a.get("data")
+        self.assertIsInstance(data_a, list)
+        ids_a = {int(row.get("id")) for row in data_a if isinstance(row.get("id"), int)}
+        self.assertIn(supplier_a_id, ids_a)
+        self.assertNotIn(supplier_b_id, ids_a)
+        self.assertFalse(any(row.get("company_id") == 2 for row in data_a))
+
+        status_list_b, body_list_b = self._get("/api/admin/suppliers", token=token_b)
+        self.assertEqual(status_list_b, 200)
+        data_b = body_list_b.get("data")
+        self.assertIsInstance(data_b, list)
+        ids_b = {int(row.get("id")) for row in data_b if isinstance(row.get("id"), int)}
+        self.assertIn(supplier_b_id, ids_b)
+        self.assertNotIn(supplier_a_id, ids_b)
+        self.assertFalse(any(row.get("company_id") == 1 for row in data_b))
+
+    def test_multi_tenant_isolation_search_filters_do_not_cross_company(self):
+        supplier_only_b = self.repo.create_supplier(
+            company_id=2,
+            name="Solo Empresa B",
+            document_id="DOC-ONLY-B",
+            contact_email=None,
+            phone=None,
+            status="active",
+            created_at=130,
+            updated_at=130,
+        )
+        row_b = self.repo._persistent_conn.execute(
+            "SELECT company_id FROM suppliers WHERE company_id = 2 AND id = ?",
+            (int(supplier_only_b.id),),
+        ).fetchone()
+        self.assertIsNotNone(row_b)
+
+        token_a = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
+
+        status_name, body_name = self._get("/api/admin/suppliers?name=Solo%20Empresa%20B", token=token_a)
+        self.assertEqual(status_name, 200)
+        data_name = body_name.get("data")
+        self.assertIsInstance(data_name, list)
+        self.assertEqual(len(data_name), 0)
+
+        status_doc, body_doc = self._get("/api/admin/suppliers?document_id=DOC-ONLY-B&status=all", token=token_a)
+        self.assertEqual(status_doc, 200)
+        data_doc = body_doc.get("data")
+        self.assertIsInstance(data_doc, list)
+        self.assertEqual(len(data_doc), 0)
+
+    def test_idor_supplier_detail_never_leaks_cross_tenant(self):
+        supplier_b = self.repo.create_supplier(
+            company_id=2,
+            name="Proveedor B IDOR",
+            document_id="DOC-B-IDOR",
+            contact_email=None,
+            phone=None,
+            status="active",
+            created_at=140,
+            updated_at=140,
+        )
+        row_b = self.repo._persistent_conn.execute(
+            "SELECT company_id FROM suppliers WHERE company_id = 2 AND id = ?",
+            (int(supplier_b.id),),
+        ).fetchone()
+        self.assertIsNotNone(row_b)
+
+        token_a = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
+        status, body = self._get(f"/api/admin/suppliers/{int(supplier_b.id)}", token=token_a)
+        self.assertIn(status, (403, 404))
+        self.assertFalse("supplier" in body)
+
     def test_list_suppliers_isolated_by_company_id_and_default_status_active(self):
         self.repo.create_supplier(
             company_id=1,
