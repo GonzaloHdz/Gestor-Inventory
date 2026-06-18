@@ -9,6 +9,7 @@ class Branch:
     address: str | None
     city: str | None
     country: str | None
+    status: str
     is_active: bool
 
     def __post_init__(self) -> None:
@@ -18,6 +19,8 @@ class Branch:
             raise ValueError("city inválido")
         if self.country is not None and (not isinstance(self.country, str) or not self.country.strip()):
             raise ValueError("country inválido")
+        if not isinstance(self.status, str) or self.status not in ("active", "inactive"):
+            raise ValueError("status inválido")
 
 
 @dataclass(frozen=True)

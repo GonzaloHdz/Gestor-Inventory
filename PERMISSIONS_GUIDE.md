@@ -31,6 +31,7 @@ Empresas / Sucursales (planificado)
 - Listar empresas (GET /api/admin/companies): empresas:leer
 - Editar empresa: empresa:editar
 - Crear sucursal (POST /api/admin/branches): sucursal:crear
+- Listar sucursales (GET /api/admin/branches): sucursales:leer
 - Editar sucursal: sucursal:editar
 
 Inventario / Productos (planificado)

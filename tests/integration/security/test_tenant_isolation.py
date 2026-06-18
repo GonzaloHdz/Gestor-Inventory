@@ -152,6 +152,52 @@ class TenantIsolationIntegrationTests(unittest.TestCase):
         row = self.repo._persistent_conn.execute("SELECT 1 FROM products WHERE sku = ? LIMIT 1", ("SKU-CT",)).fetchone()
         self.assertIsNone(row)
 
+    def test_read_isolation_list_branches(self):
+        token_a = self._token_for(user_id=self.user_a.id, company_id=1, email=self.user_a.email)
+        status, body = self._get("/api/admin/branches", token=token_a)
+        self.assertEqual(status, 200)
+        data = body.get("data")
+        self.assertIsInstance(data, list)
+        self.assertTrue(all(b.get("company_id") == 1 for b in data))
+        self.assertFalse(any(b.get("company_id") == 2 for b in data))
+
+    def test_list_branches_filters_city_and_status(self):
+        conn = self.repo._persistent_conn
+        conn.execute("UPDATE branches SET city = 'Monterrey', status = 'active' WHERE company_id = 1 AND id = ?", (self.branch_a.id,))
+        self.repo.create_branch(
+            company_id=1,
+            name="Sucursal Inactiva",
+            address=None,
+            city="CDMX",
+            country=None,
+            status="inactive",
+            is_active=False,
+        )
+        self.repo.create_branch(
+            company_id=1,
+            name="Sucursal Extra",
+            address=None,
+            city="CDMX",
+            country=None,
+            status="active",
+            is_active=True,
+        )
+        conn.commit()
+
+        token_a = self._token_for(user_id=self.user_a.id, company_id=1, email=self.user_a.email)
+
+        status_city, body_city = self._get("/api/admin/branches?city=Monterrey", token=token_a)
+        self.assertEqual(status_city, 200)
+        self.assertTrue(all(b.get("city") == "Monterrey" for b in body_city.get("data") or []))
+
+        status_inactive, body_inactive = self._get("/api/admin/branches?status=inactive", token=token_a)
+        self.assertEqual(status_inactive, 200)
+        self.assertTrue(all(b.get("status") == "inactive" for b in body_inactive.get("data") or []))
+
+        status_combo, body_combo = self._get("/api/admin/branches?city=CDMX&status=active", token=token_a)
+        self.assertEqual(status_combo, 200)
+        self.assertTrue(all(b.get("city") == "CDMX" and b.get("status") == "active" for b in body_combo.get("data") or []))
+
 
 if __name__ == "__main__":
     unittest.main()

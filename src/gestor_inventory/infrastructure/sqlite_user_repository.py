@@ -502,15 +502,16 @@ class SqliteUserRepository:
         company_id: int,
         name: str,
         address: str | None,
-        is_active: bool,
         city: str | None = None,
         country: str | None = None,
+        status: str = "active",
+        is_active: bool,
     ) -> Branch:
         with self._connect() as conn:
             cur = conn.execute(
                 """
-                INSERT INTO branches (company_id, name, address, city, country, is_active)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO branches (company_id, name, address, city, country, status, is_active)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     int(company_id),
@@ -518,6 +519,7 @@ class SqliteUserRepository:
                     str(address) if address is not None else None,
                     str(city) if city is not None else None,
                     str(country) if country is not None else None,
+                    str(status),
                     1 if is_active else 0,
                 ),
             )
@@ -530,8 +532,39 @@ class SqliteUserRepository:
                 address=address,
                 city=city,
                 country=country,
+                status=str(status),
                 is_active=bool(is_active),
             )
+
+    def list_branches(self, *, company_id: int, city: str | None, status: str | None) -> list[Branch]:
+        with self._connect() as conn:
+            sql = """
+            SELECT company_id, id, name, address, city, country, status, is_active
+            FROM branches
+            WHERE company_id = ?
+            """
+            params: list[object] = [int(company_id)]
+            if city is not None:
+                sql += " AND city = ?"
+                params.append(str(city))
+            if status is not None:
+                sql += " AND status = ?"
+                params.append(str(status))
+            sql += " ORDER BY id"
+            rows = conn.execute(sql, params).fetchall()
+            return [
+                Branch(
+                    company_id=int(company_id_v),
+                    id=int(branch_id),
+                    name=str(name),
+                    address=str(address) if address is not None else None,
+                    city=str(city_v) if city_v is not None else None,
+                    country=str(country_v) if country_v is not None else None,
+                    status=str(status_v),
+                    is_active=bool(is_active),
+                )
+                for (company_id_v, branch_id, name, address, city_v, country_v, status_v, is_active) in rows
+            ]
 
     def branch_belongs_to_company(self, *, company_id: int, branch_id: int) -> bool:
         with self._connect() as conn:
@@ -892,6 +925,7 @@ class SqliteUserRepository:
                 (800, "empresas:crear", "Crear empresas"),
                 (801, "empresas:leer", "Leer empresas"),
                 (810, "sucursal:crear", "Crear sucursales"),
+                (811, "sucursales:leer", "Leer sucursales"),
             ],
         )
         conn.execute(
@@ -970,6 +1004,7 @@ class SqliteUserRepository:
                   address TEXT NULL,
                   city TEXT NULL,
                   country TEXT NULL,
+                  status TEXT NOT NULL DEFAULT 'active',
                   is_active INTEGER NOT NULL DEFAULT 1,
                   CONSTRAINT branches_company_id_id_unique UNIQUE (company_id, id),
                   CONSTRAINT branches_company_name_unique UNIQUE (company_id, name)
@@ -1177,7 +1212,8 @@ class SqliteUserRepository:
                   (700, 'configuracion:modificar', 'Modificar configuración'),
                   (800, 'empresas:crear', 'Crear empresas'),
                   (801, 'empresas:leer', 'Leer empresas'),
-                  (810, 'sucursal:crear', 'Crear sucursales');
+                  (810, 'sucursal:crear', 'Crear sucursales'),
+                  (811, 'sucursales:leer', 'Leer sucursales');
 
                 INSERT OR IGNORE INTO role_permissions (company_id, role_id, permission_id)
                 SELECT r.company_id, r.id, p.id
@@ -1215,6 +1251,8 @@ class SqliteUserRepository:
                 conn.execute("ALTER TABLE branches ADD COLUMN city TEXT NULL")
             if "country" not in branch_cols:
                 conn.execute("ALTER TABLE branches ADD COLUMN country TEXT NULL")
+            if "status" not in branch_cols:
+                conn.execute("ALTER TABLE branches ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
             conn.execute(
                 """
                 INSERT OR IGNORE INTO companies (id, name, currency, timezone, status, created_at)

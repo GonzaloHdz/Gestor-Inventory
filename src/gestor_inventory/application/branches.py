@@ -16,6 +16,7 @@ class BranchRepository(Protocol):
         address: str | None,
         city: str | None,
         country: str | None,
+        status: str,
         is_active: bool,
     ) -> Branch: ...
 
@@ -50,6 +51,7 @@ def create_branch(repo: BranchRepository, req: CreateBranchRequest) -> CreateBra
         address=address,
         city=city,
         country=country,
+        status="active",
         is_active=True,
     )
     return CreateBranchResponse(branch=branch)

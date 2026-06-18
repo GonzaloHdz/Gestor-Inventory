@@ -14,6 +14,7 @@ from gestor_inventory.application.categories import (
 from gestor_inventory.application.branches import CreateBranchRequest, create_branch
 from gestor_inventory.application.create_company import CreateCompanyRequest, create_company
 from gestor_inventory.application.inventory import ListInventoryRequest, list_inventory
+from gestor_inventory.application.list_branches import ListBranchesRequest, list_branches
 from gestor_inventory.application.list_rbac import (
     ListRolesRequest,
     list_permissions,
@@ -62,6 +63,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/admin/companies":
             self._handle_list_companies(parsed.query)
             return
+        if parsed.path == "/api/admin/branches":
+            self._handle_list_branches(parsed.query)
+            return
         if parsed.path == "/api/admin/roles":
             self._handle_list_roles()
             return
@@ -75,6 +79,50 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": "Prohibido"})
             return
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+
+    def _handle_list_branches(self, query: str) -> None:
+        try:
+            authz = self._require_permissions({"sucursales:leer"})
+            if authz is None:
+                return
+            company_id = int(authz.get("company_id"))
+            params = parse_qs(query, keep_blank_values=True)
+            city = (params.get("city") or [None])[0]
+            status = (params.get("status") or [None])[0]
+            res = list_branches(self.repo, ListBranchesRequest(company_id=company_id, city=city, status=status))
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._audit_data(
+            authz,
+            action="READ",
+            resource="sucursales",
+            details=json.dumps({"returned": len(res.branches)}, separators=(",", ":")),
+        )
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "data": [
+                    {
+                        "company_id": b.company_id,
+                        "id": b.id,
+                        "name": b.name,
+                        "address": b.address,
+                        "city": b.city,
+                        "country": b.country,
+                        "status": b.status,
+                    }
+                    for b in res.branches
+                ]
+            },
+        )
 
     def _handle_list_companies(self, query: str) -> None:
         try:
@@ -251,6 +299,7 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                     "address": b.address,
                     "city": b.city,
                     "country": b.country,
+                    "status": b.status,
                     "is_active": b.is_active,
                 }
             },
