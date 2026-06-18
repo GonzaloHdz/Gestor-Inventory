@@ -10,6 +10,10 @@ class CrossTenantReferenceError(ValidationError):
     pass
 
 
+class BranchHasInventoryError(Exception):
+    pass
+
+
 class ForbiddenError(Exception):
     pass
 

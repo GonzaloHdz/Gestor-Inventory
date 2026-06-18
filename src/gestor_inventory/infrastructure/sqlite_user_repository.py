@@ -566,6 +566,104 @@ class SqliteUserRepository:
                 for (company_id_v, branch_id, name, address, city_v, country_v, status_v, is_active) in rows
             ]
 
+    def get_branch_by_id(self, *, company_id: int, branch_id: int) -> Branch | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT company_id, id, name, address, city, country, status, is_active
+                FROM branches
+                WHERE company_id = ? AND id = ?
+                LIMIT 1
+                """,
+                (int(company_id), int(branch_id)),
+            ).fetchone()
+            if row is None:
+                return None
+            company_id_v, branch_id_v, name, address, city_v, country_v, status_v, is_active = row
+            return Branch(
+                company_id=int(company_id_v),
+                id=int(branch_id_v),
+                name=str(name),
+                address=str(address) if address is not None else None,
+                city=str(city_v) if city_v is not None else None,
+                country=str(country_v) if country_v is not None else None,
+                status=str(status_v),
+                is_active=bool(is_active),
+            )
+
+    def update_branch(
+        self,
+        *,
+        company_id: int,
+        branch_id: int,
+        name: str | None,
+        address: str | None,
+        city: str | None,
+        country: str | None,
+    ) -> Branch:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                UPDATE branches
+                SET
+                  name = COALESCE(?, name),
+                  address = COALESCE(?, address),
+                  city = COALESCE(?, city),
+                  country = COALESCE(?, country)
+                WHERE company_id = ? AND id = ?
+                """,
+                (
+                    str(name) if name is not None else None,
+                    str(address) if address is not None else None,
+                    str(city) if city is not None else None,
+                    str(country) if country is not None else None,
+                    int(company_id),
+                    int(branch_id),
+                ),
+            )
+            if int(cur.rowcount) != 1:
+                raise sqlite3.IntegrityError("branch not found")
+            conn.commit()
+        branch = self.get_branch_by_id(company_id=int(company_id), branch_id=int(branch_id))
+        if branch is None:
+            raise sqlite3.IntegrityError("branch not found")
+        return branch
+
+    def branch_has_inventory(self, *, company_id: int, branch_id: int) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT 1
+                FROM inventory_items
+                WHERE company_id = ? AND branch_id = ?
+                LIMIT 1
+                """,
+                (int(company_id), int(branch_id)),
+            ).fetchone()
+            return row is not None
+
+    def deactivate_branch(self, *, company_id: int, branch_id: int) -> str:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                UPDATE branches
+                SET status = 'inactive', is_active = 0
+                WHERE company_id = ? AND id = ? AND status <> 'inactive'
+                """,
+                (int(company_id), int(branch_id)),
+            )
+            conn.commit()
+            if int(cur.rowcount) == 1:
+                return "changed"
+            row = conn.execute(
+                "SELECT status FROM branches WHERE company_id = ? AND id = ? LIMIT 1",
+                (int(company_id), int(branch_id)),
+            ).fetchone()
+            if row is None:
+                return "not_found"
+            (status,) = row
+            return "already_inactive" if str(status) == "inactive" else "not_found"
+
     def branch_belongs_to_company(self, *, company_id: int, branch_id: int) -> bool:
         with self._connect() as conn:
             row = conn.execute(
@@ -926,6 +1024,8 @@ class SqliteUserRepository:
                 (801, "empresas:leer", "Leer empresas"),
                 (810, "sucursal:crear", "Crear sucursales"),
                 (811, "sucursales:leer", "Leer sucursales"),
+                (812, "sucursales:editar", "Editar sucursales"),
+                (813, "sucursales:eliminar", "Eliminar (desactivar) sucursales"),
             ],
         )
         conn.execute(
@@ -1213,7 +1313,9 @@ class SqliteUserRepository:
                   (800, 'empresas:crear', 'Crear empresas'),
                   (801, 'empresas:leer', 'Leer empresas'),
                   (810, 'sucursal:crear', 'Crear sucursales'),
-                  (811, 'sucursales:leer', 'Leer sucursales');
+                  (811, 'sucursales:leer', 'Leer sucursales'),
+                  (812, 'sucursales:editar', 'Editar sucursales'),
+                  (813, 'sucursales:eliminar', 'Eliminar (desactivar) sucursales');
 
                 INSERT OR IGNORE INTO role_permissions (company_id, role_id, permission_id)
                 SELECT r.company_id, r.id, p.id

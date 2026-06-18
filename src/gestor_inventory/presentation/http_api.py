@@ -13,6 +13,7 @@ from gestor_inventory.application.categories import (
 )
 from gestor_inventory.application.branches import CreateBranchRequest, create_branch
 from gestor_inventory.application.create_company import CreateCompanyRequest, create_company
+from gestor_inventory.application.deactivate_branch import DeactivateBranchRequest, deactivate_branch
 from gestor_inventory.application.inventory import ListInventoryRequest, list_inventory
 from gestor_inventory.application.list_branches import ListBranchesRequest, list_branches
 from gestor_inventory.application.list_rbac import (
@@ -31,8 +32,10 @@ from gestor_inventory.application.manage_user_roles import (
 from gestor_inventory.application.request_password_reset import RequestPasswordResetRequest, request_password_reset
 from gestor_inventory.application.register_user import RegisterUserRequest, register_user
 from gestor_inventory.application.reset_password import ResetPasswordRequest, reset_password
+from gestor_inventory.application.update_branch import UpdateBranchRequest, update_branch
 from gestor_inventory.application.verify_email import VerifyEmailRequest, verify_email
 from gestor_inventory.domain.errors import (
+    BranchHasInventoryError,
     CompanyNameAlreadyExistsError,
     EmailAlreadyExistsError,
     InvalidCredentialsError,
@@ -205,6 +208,24 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             return
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
 
+    def do_PUT(self):
+        if self.path.startswith("/api/admin/branches/"):
+            self._handle_update_branch(self.path)
+            return
+        if self.path.startswith("/api/admin/"):
+            self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": "Prohibido"})
+            return
+        self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+
+    def do_DELETE(self):
+        if self.path.startswith("/api/admin/branches/"):
+            self._handle_deactivate_branch(self.path)
+            return
+        if self.path.startswith("/api/admin/"):
+            self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": "Prohibido"})
+            return
+        self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+
     def _handle_create_company(self) -> None:
         try:
             payload = self._read_json()
@@ -304,6 +325,98 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 }
             },
         )
+
+    def _handle_update_branch(self, path: str) -> None:
+        try:
+            authz = self._require_permissions({"sucursales:editar"})
+            if authz is None:
+                return
+            company_id = int(authz.get("company_id"))
+            raw_id = path.removeprefix("/api/admin/branches/").strip("/")
+            branch_id = int(raw_id)
+            payload = self._read_json()
+            res = update_branch(
+                self.repo,
+                UpdateBranchRequest(
+                    company_id=company_id,
+                    branch_id=branch_id,
+                    name=payload.get("name"),
+                    address=payload.get("address"),
+                    city=payload.get("city"),
+                    country=payload.get("country"),
+                ),
+            )
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except NotFoundError:
+            self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            return
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except json.JSONDecodeError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        b = res.branch
+        self._audit_data(
+            authz,
+            action="UPDATE",
+            resource="sucursales",
+            details=json.dumps({"branch_id": b.id}, separators=(",", ":")),
+        )
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "branch": {
+                    "company_id": b.company_id,
+                    "id": b.id,
+                    "name": b.name,
+                    "address": b.address,
+                    "city": b.city,
+                    "country": b.country,
+                    "status": b.status,
+                    "is_active": b.is_active,
+                }
+            },
+        )
+
+    def _handle_deactivate_branch(self, path: str) -> None:
+        try:
+            authz = self._require_permissions({"sucursales:eliminar"})
+            if authz is None:
+                return
+            company_id = int(authz.get("company_id"))
+            raw_id = path.removeprefix("/api/admin/branches/").strip("/")
+            branch_id = int(raw_id)
+            res = deactivate_branch(self.repo, DeactivateBranchRequest(company_id=company_id, branch_id=branch_id))
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except BranchHasInventoryError:
+            self._send_json(HTTPStatus.CONFLICT, {"error": "branch_has_inventory"})
+            return
+        except NotFoundError:
+            self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            return
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._audit_data(
+            authz,
+            action="DELETE",
+            resource="sucursales",
+            details=json.dumps({"branch_id": int(branch_id), "changed": bool(res.changed)}, separators=(",", ":")),
+        )
+        self._send_json(HTTPStatus.OK, {"status": "ok", "changed": res.changed})
 
     def _handle_register(self) -> None:
         try:

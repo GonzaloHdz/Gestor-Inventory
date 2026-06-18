@@ -111,6 +111,33 @@ class TenantIsolationIntegrationTests(unittest.TestCase):
         finally:
             conn.close()
 
+    def _put(self, path: str, body: dict, token: str | None) -> tuple[int, dict]:
+        conn = http.client.HTTPConnection(self.base[0], self.base[1], timeout=2)
+        try:
+            headers = {"Content-Type": "application/json"}
+            if token is not None:
+                headers["Authorization"] = f"Bearer {token}"
+            raw = json.dumps(body).encode("utf-8")
+            conn.request("PUT", path, body=raw, headers=headers)
+            resp = conn.getresponse()
+            data = resp.read()
+            return resp.status, ({} if not data else json.loads(data.decode("utf-8")))
+        finally:
+            conn.close()
+
+    def _delete(self, path: str, token: str | None) -> tuple[int, dict]:
+        conn = http.client.HTTPConnection(self.base[0], self.base[1], timeout=2)
+        try:
+            headers = {}
+            if token is not None:
+                headers["Authorization"] = f"Bearer {token}"
+            conn.request("DELETE", path, headers=headers)
+            resp = conn.getresponse()
+            data = resp.read()
+            return resp.status, ({} if not data else json.loads(data.decode("utf-8")))
+        finally:
+            conn.close()
+
     def test_read_isolation_inventory_list(self):
         token_a = self._token_for(user_id=self.user_a.id, company_id=1, email=self.user_a.email)
         status, body = self._get(f"/api/inventory?branch_id={self.branch_a.id}", token=token_a)
@@ -197,6 +224,47 @@ class TenantIsolationIntegrationTests(unittest.TestCase):
         status_combo, body_combo = self._get("/api/admin/branches?city=CDMX&status=active", token=token_a)
         self.assertEqual(status_combo, 200)
         self.assertTrue(all(b.get("city") == "CDMX" and b.get("status") == "active" for b in body_combo.get("data") or []))
+
+    def test_update_branch_success_and_cross_tenant_blocked(self):
+        token_a = self._token_for(user_id=self.user_a.id, company_id=1, email=self.user_a.email)
+        status_ok, body_ok = self._put(
+            f"/api/admin/branches/{self.branch_a.id}",
+            {"address": "Calle 123", "city": "Rosario", "country": "AR"},
+            token=token_a,
+        )
+        self.assertEqual(status_ok, 200)
+        self.assertEqual(body_ok.get("branch", {}).get("city"), "Rosario")
+
+        status_cross, _ = self._put(
+            f"/api/admin/branches/{self.branch_b.id}",
+            {"city": "Hack"},
+            token=token_a,
+        )
+        self.assertEqual(status_cross, 404)
+
+    def test_deactivate_branch_blocked_by_inventory_and_success_without_inventory(self):
+        token_a = self._token_for(user_id=self.user_a.id, company_id=1, email=self.user_a.email)
+        status_block, _ = self._delete(f"/api/admin/branches/{self.branch_a.id}", token=token_a)
+        self.assertIn(status_block, (400, 409))
+
+        empty_branch = self.repo.create_branch(
+            company_id=1,
+            name="Sucursal Vacía",
+            address=None,
+            city=None,
+            country=None,
+            status="active",
+            is_active=True,
+        )
+        status_ok, body_ok = self._delete(f"/api/admin/branches/{empty_branch.id}", token=token_a)
+        self.assertEqual(status_ok, 200)
+        self.assertIn(body_ok.get("changed"), (True, False))
+        row = self.repo._persistent_conn.execute(
+            "SELECT status FROM branches WHERE company_id = 1 AND id = ?",
+            (int(empty_branch.id),),
+        ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(str(row[0]), "inactive")
 
 
 if __name__ == "__main__":
