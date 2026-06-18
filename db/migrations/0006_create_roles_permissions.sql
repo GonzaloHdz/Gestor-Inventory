@@ -15,7 +15,7 @@ CREATE TABLE permissions (
   description TEXT NULL,
   CONSTRAINT permissions_code_unique UNIQUE (code)
 );
-
+  
 CREATE TABLE role_permissions (
   id BIGSERIAL PRIMARY KEY,
   company_id BIGINT NOT NULL,

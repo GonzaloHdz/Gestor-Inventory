@@ -28,6 +28,7 @@ Usuarios
 Empresas / Sucursales (planificado)
 
 - Crear empresa (POST /api/admin/companies): empresas:crear
+- Listar empresas (GET /api/admin/companies): empresas:leer
 - Editar empresa: empresa:editar
 - Crear sucursal: sucursal:crear
 - Editar sucursal: sucursal:editar

@@ -7,4 +7,5 @@ class Company:
     name: str
     currency: str
     timezone: str
+    status: str
     created_at: int

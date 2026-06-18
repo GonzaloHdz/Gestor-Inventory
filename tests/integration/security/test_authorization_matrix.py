@@ -118,8 +118,10 @@ class AuthorizationIntegrationTests(unittest.TestCase):
 
     def _companies(self) -> list[dict]:
         conn = self.repo._persistent_conn
-        rows = conn.execute("SELECT id, name, currency, timezone FROM companies ORDER BY id").fetchall()
-        return [{"id": int(i), "name": str(n), "currency": str(c), "timezone": str(t)} for (i, n, c, t) in rows]
+        rows = conn.execute("SELECT id, name, currency, timezone, status FROM companies ORDER BY id").fetchall()
+        return [
+            {"id": int(i), "name": str(n), "currency": str(c), "timezone": str(t), "status": str(s)} for (i, n, c, t, s) in rows
+        ]
 
     def test_matrix_access_by_role(self):
         matrix = [
@@ -278,3 +280,43 @@ class AuthorizationIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(status2, 409)
         self.assertEqual(body2.get("error"), "company_name_exists")
+
+    def test_list_companies_requires_permission(self):
+        admin_company1 = self.users[(1, 12)]
+        token = self._token_for(user_id=admin_company1.id, company_id=1, email=admin_company1.email)
+        status, _ = self._get("/api/admin/companies?page=1&per_page=10", token=token)
+        self.assertEqual(status, 403)
+
+    def test_list_companies_pagination_and_audit(self):
+        superadmin_company1 = self.users[(1, 13)]
+        token = self._token_for(user_id=superadmin_company1.id, company_id=1, email=superadmin_company1.email)
+
+        for i in range(12):
+            status_c, _ = self._post(
+                "/api/admin/companies",
+                {"name": f"Empresa {i}", "currency": "USD", "timezone": "UTC"},
+                token=token,
+            )
+            self.assertEqual(status_c, 201)
+
+        status, body = self._get("/api/admin/companies?page=1&per_page=10", token=token)
+        self.assertEqual(status, 200)
+        self.assertIsInstance(body.get("data"), list)
+        self.assertEqual(len(body["data"]), 10)
+        self.assertEqual(body.get("pagination", {}).get("total"), 12)
+        self.assertEqual(body.get("pagination", {}).get("page"), 1)
+        self.assertEqual(body.get("pagination", {}).get("per_page"), 10)
+        self.assertEqual(body.get("pagination", {}).get("pages"), 2)
+        self.assertTrue(all(row.get("status") == "active" for row in body["data"]))
+        self.assertTrue(all(isinstance(row.get("created_at"), str) for row in body["data"]))
+
+        logs = self._data_audit_logs()
+        self.assertTrue(
+            any(
+                l["company_id"] == 1
+                and l["user_id"] == superadmin_company1.id
+                and l["action"] == "READ"
+                and l["resource"] == "empresas"
+                for l in logs
+            )
+        )

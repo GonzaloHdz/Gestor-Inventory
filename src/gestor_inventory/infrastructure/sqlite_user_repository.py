@@ -563,14 +563,50 @@ class SqliteUserRepository:
         with self._connect() as conn:
             cur = conn.execute(
                 """
-                INSERT INTO companies (name, currency, timezone, created_at)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO companies (name, currency, timezone, status, created_at)
+                VALUES (?, ?, ?, 'active', ?)
                 """,
                 (str(name), str(currency), str(timezone), int(created_at)),
             )
             company_id = int(cur.lastrowid)
             conn.commit()
-            return Company(id=company_id, name=str(name), currency=str(currency), timezone=str(timezone), created_at=int(created_at))
+            return Company(
+                id=company_id,
+                name=str(name),
+                currency=str(currency),
+                timezone=str(timezone),
+                status="active",
+                created_at=int(created_at),
+            )
+
+    def count_active_companies(self) -> int:
+        with self._connect() as conn:
+            row = conn.execute("SELECT COUNT(1) FROM companies WHERE status = 'active'").fetchone()
+            return 0 if row is None else int(row[0])
+
+    def list_active_companies(self, *, limit: int, offset: int) -> list[Company]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, name, currency, timezone, status, created_at
+                FROM companies
+                WHERE status = 'active'
+                ORDER BY id
+                LIMIT ? OFFSET ?
+                """,
+                (int(limit), int(offset)),
+            ).fetchall()
+            return [
+                Company(
+                    id=int(company_id),
+                    name=str(name),
+                    currency=str(currency),
+                    timezone=str(timezone),
+                    status=str(status),
+                    created_at=int(created_at),
+                )
+                for (company_id, name, currency, timezone, status, created_at) in rows
+            ]
 
     def upsert_inventory_item(
         self,
@@ -594,6 +630,14 @@ class SqliteUserRepository:
                 (int(company_id), int(branch_id), int(product_id), int(quantity), int(min_quantity), int(now)),
             )
             conn.commit()
+            return InventoryItem(
+                company_id=int(company_id),
+                branch_id=int(branch_id),
+                product_id=int(product_id),
+                quantity=int(quantity),
+                min_quantity=int(min_quantity),
+                updated_at=int(now),
+            )
 
     def create_data_audit_log(
         self,
@@ -621,14 +665,6 @@ class SqliteUserRepository:
                 ),
             )
             conn.commit()
-            return InventoryItem(
-                company_id=int(company_id),
-                branch_id=int(branch_id),
-                product_id=int(product_id),
-                quantity=int(quantity),
-                min_quantity=int(min_quantity),
-                updated_at=int(now),
-            )
 
     def list_inventory_items(self, *, company_id: int, branch_id: int) -> list[InventoryItem]:
         with self._connect() as conn:
@@ -822,6 +858,7 @@ class SqliteUserRepository:
                 (600, "reportes:leer", "Leer reportes"),
                 (700, "configuracion:modificar", "Modificar configuración"),
                 (800, "empresas:crear", "Crear empresas"),
+                (801, "empresas:leer", "Leer empresas"),
             ],
         )
         conn.execute(
@@ -850,7 +887,7 @@ class SqliteUserRepository:
             INSERT OR IGNORE INTO role_permissions (company_id, role_id, permission_id)
             SELECT r.company_id, r.id, p.id
             FROM roles r
-            JOIN permissions p ON p.code <> 'empresas:crear'
+            JOIN permissions p ON p.code NOT IN ('empresas:crear', 'empresas:leer')
             WHERE r.name = 'Administrador' AND r.company_id = ?
             """,
             (int(company_id),),
@@ -875,6 +912,7 @@ class SqliteUserRepository:
                   name TEXT NOT NULL,
                   currency TEXT NOT NULL,
                   timezone TEXT NOT NULL,
+                  status TEXT NOT NULL DEFAULT 'active',
                   created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
                   CONSTRAINT companies_name_unique UNIQUE (name)
                 );
@@ -1100,7 +1138,8 @@ class SqliteUserRepository:
                   (502, 'compras:aprobar', 'Aprobar órdenes de compra'),
                   (600, 'reportes:leer', 'Leer reportes'),
                   (700, 'configuracion:modificar', 'Modificar configuración'),
-                  (800, 'empresas:crear', 'Crear empresas');
+                  (800, 'empresas:crear', 'Crear empresas'),
+                  (801, 'empresas:leer', 'Leer empresas');
 
                 INSERT OR IGNORE INTO role_permissions (company_id, role_id, permission_id)
                 SELECT r.company_id, r.id, p.id
@@ -1118,7 +1157,7 @@ class SqliteUserRepository:
                 INSERT OR IGNORE INTO role_permissions (company_id, role_id, permission_id)
                 SELECT r.company_id, r.id, p.id
                 FROM roles r
-                JOIN permissions p ON p.code <> 'empresas:crear'
+                JOIN permissions p ON p.code NOT IN ('empresas:crear', 'empresas:leer')
                 WHERE r.name = 'Administrador' AND r.company_id IN (1, 2);
 
                 INSERT OR IGNORE INTO role_permissions (company_id, role_id, permission_id)
@@ -1128,3 +1167,7 @@ class SqliteUserRepository:
                 WHERE r.name = 'Superadministrador' AND r.company_id IN (1, 2);
                 """
             )
+            cols = [row[1] for row in conn.execute("PRAGMA table_info(companies)").fetchall()]
+            if "status" not in cols:
+                conn.execute("ALTER TABLE companies ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
+            conn.commit()

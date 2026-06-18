@@ -18,6 +18,7 @@ from gestor_inventory.application.list_rbac import (
     list_permissions,
     list_roles,
 )
+from gestor_inventory.application.list_companies import ListCompaniesRequest, list_companies
 from gestor_inventory.application.manage_user_roles import (
     AssignUserRoleRequest,
     RevokeUserRoleRequest,
@@ -56,6 +57,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/inventory":
             self._handle_list_inventory(parsed.query)
             return
+        if parsed.path == "/api/admin/companies":
+            self._handle_list_companies(parsed.query)
+            return
         if parsed.path == "/api/admin/roles":
             self._handle_list_roles()
             return
@@ -69,6 +73,51 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": "Prohibido"})
             return
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+
+    def _handle_list_companies(self, query: str) -> None:
+        try:
+            authz = self._require_permissions({"empresas:leer"})
+            if authz is None:
+                return
+            params = parse_qs(query, keep_blank_values=True)
+            page_raw = (params.get("page") or ["1"])[0]
+            per_page_raw = (params.get("per_page") or ["10"])[0]
+            page = int(page_raw)
+            per_page = int(per_page_raw)
+            res = list_companies(self.repo, ListCompaniesRequest(page=page, per_page=per_page))
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._audit_data(
+            authz,
+            action="READ",
+            resource="empresas",
+            details=json.dumps({"page": res.page, "per_page": res.per_page, "returned": len(res.companies)}, separators=(",", ":")),
+        )
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "data": [
+                    {
+                        "id": c.id,
+                        "name": c.name,
+                        "currency": c.currency,
+                        "timezone": c.timezone,
+                        "status": c.status,
+                        "created_at": str(c.created_at),
+                    }
+                    for c in res.companies
+                ],
+                "pagination": {"total": res.total, "page": res.page, "per_page": res.per_page, "pages": res.pages},
+            },
+        )
 
     def do_POST(self):
         if self.path == "/api/users/register":
