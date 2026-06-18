@@ -5,7 +5,7 @@ import time
 from gestor_inventory.domain.errors import EmailAlreadyExistsError
 from gestor_inventory.domain.company import Company
 from gestor_inventory.domain.company_setting import CompanySetting
-from gestor_inventory.domain.operational import Branch, InventoryItem, InventoryMovement, Product
+from gestor_inventory.domain.operational import Branch, InventoryItem, InventoryMovement, Product, Supplier
 from gestor_inventory.domain.operational import Category
 from gestor_inventory.domain.rbac import Permission, Role
 from gestor_inventory.domain.user import User
@@ -746,6 +746,49 @@ class SqliteUserRepository:
                 created_at=int(created_at),
             )
 
+    def create_supplier(
+        self,
+        *,
+        company_id: int,
+        name: str,
+        document_id: str | None,
+        contact_email: str | None,
+        phone: str | None,
+        status: str,
+        created_at: int,
+        updated_at: int,
+    ) -> Supplier:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO suppliers (company_id, name, document_id, contact_email, phone, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    int(company_id),
+                    str(name),
+                    (str(document_id) if document_id is not None else None),
+                    (str(contact_email) if contact_email is not None else None),
+                    (str(phone) if phone is not None else None),
+                    str(status),
+                    int(created_at),
+                    int(updated_at),
+                ),
+            )
+            supplier_id = int(cur.lastrowid)
+            conn.commit()
+            return Supplier(
+                company_id=int(company_id),
+                id=supplier_id,
+                name=str(name),
+                document_id=(str(document_id) if document_id is not None else None),
+                contact_email=(str(contact_email) if contact_email is not None else None),
+                phone=(str(phone) if phone is not None else None),
+                status=str(status),
+                created_at=int(created_at),
+                updated_at=int(updated_at),
+            )
+
     def count_active_companies(self) -> int:
         with self._connect() as conn:
             row = conn.execute("SELECT COUNT(1) FROM companies WHERE status = 'active'").fetchone()
@@ -1205,6 +1248,21 @@ class SqliteUserRepository:
                 );
                 CREATE INDEX IF NOT EXISTS products_company_id_idx ON products (company_id);
                 CREATE INDEX IF NOT EXISTS products_company_category_id_idx ON products (company_id, category_id);
+
+                CREATE TABLE IF NOT EXISTS suppliers (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  company_id INTEGER NOT NULL,
+                  name TEXT NOT NULL,
+                  document_id TEXT NULL,
+                  contact_email TEXT NULL,
+                  phone TEXT NULL,
+                  status TEXT NOT NULL DEFAULT 'active',
+                  created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+                  updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+                  CONSTRAINT suppliers_company_fk FOREIGN KEY (company_id) REFERENCES companies (id) ON DELETE CASCADE,
+                  CONSTRAINT suppliers_company_document_id_unique UNIQUE (company_id, document_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_suppliers_company_id ON suppliers (company_id);
 
                 CREATE TABLE IF NOT EXISTS inventory_items (
                   company_id INTEGER NOT NULL,
