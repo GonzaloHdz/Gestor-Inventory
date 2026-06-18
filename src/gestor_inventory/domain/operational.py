@@ -7,11 +7,17 @@ class Branch:
     id: int
     name: str
     address: str | None
+    city: str | None
+    country: str | None
     is_active: bool
 
     def __post_init__(self) -> None:
         if not isinstance(self.company_id, int) or self.company_id <= 0:
             raise ValueError("company_id inválido")
+        if self.city is not None and (not isinstance(self.city, str) or not self.city.strip()):
+            raise ValueError("city inválido")
+        if self.country is not None and (not isinstance(self.country, str) or not self.country.strip()):
+            raise ValueError("country inválido")
 
 
 @dataclass(frozen=True)

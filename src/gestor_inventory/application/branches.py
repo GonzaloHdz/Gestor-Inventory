@@ -8,7 +8,16 @@ from gestor_inventory.domain.operational import Branch
 class BranchRepository(Protocol):
     def company_is_active(self, *, company_id: int) -> bool: ...
 
-    def create_branch(self, *, company_id: int, name: str, address: str | None, is_active: bool) -> Branch: ...
+    def create_branch(
+        self,
+        *,
+        company_id: int,
+        name: str,
+        address: str | None,
+        city: str | None,
+        country: str | None,
+        is_active: bool,
+    ) -> Branch: ...
 
 
 @dataclass(frozen=True)
@@ -16,6 +25,8 @@ class CreateBranchRequest:
     company_id: int
     name: str
     address: str | None = None
+    city: str | None = None
+    country: str | None = None
 
 
 @dataclass(frozen=True)
@@ -27,11 +38,20 @@ def create_branch(repo: BranchRepository, req: CreateBranchRequest) -> CreateBra
     company_id = _validate_company_id(req.company_id)
     name = _validate_name(req.name)
     address = _normalize_optional(req.address)
+    city = _normalize_optional(req.city)
+    country = _normalize_optional(req.country)
 
     if not repo.company_is_active(company_id=company_id):
         raise CrossTenantReferenceError("empresa inválida")
 
-    branch = repo.create_branch(company_id=company_id, name=name, address=address, is_active=True)
+    branch = repo.create_branch(
+        company_id=company_id,
+        name=name,
+        address=address,
+        city=city,
+        country=country,
+        is_active=True,
+    )
     return CreateBranchResponse(branch=branch)
 
 

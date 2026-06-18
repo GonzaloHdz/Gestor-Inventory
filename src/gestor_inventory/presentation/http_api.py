@@ -212,7 +212,13 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             company_id = int(authz.get("company_id"))
             res = create_branch(
                 self.repo,
-                CreateBranchRequest(company_id=company_id, name=payload["name"], address=payload.get("address")),
+                CreateBranchRequest(
+                    company_id=company_id,
+                    name=payload["name"],
+                    address=payload.get("address"),
+                    city=payload.get("city"),
+                    country=payload.get("country"),
+                ),
             )
         except KeyError:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
@@ -236,7 +242,17 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         )
         self._send_json(
             HTTPStatus.CREATED,
-            {"branch": {"company_id": b.company_id, "id": b.id, "name": b.name, "address": b.address, "is_active": b.is_active}},
+            {
+                "branch": {
+                    "company_id": b.company_id,
+                    "id": b.id,
+                    "name": b.name,
+                    "address": b.address,
+                    "city": b.city,
+                    "country": b.country,
+                    "is_active": b.is_active,
+                }
+            },
         )
 
     def _handle_register(self) -> None:
