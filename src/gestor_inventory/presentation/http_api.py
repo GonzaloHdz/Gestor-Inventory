@@ -15,6 +15,7 @@ from gestor_inventory.application.branches import CreateBranchRequest, create_br
 from gestor_inventory.application.create_company import CreateCompanyRequest, create_company
 from gestor_inventory.application.set_company_default_branch import SetCompanyDefaultBranchRequest, set_company_default_branch
 from gestor_inventory.application.deactivate_branch import DeactivateBranchRequest, deactivate_branch
+from gestor_inventory.application.get_company_settings import GetCompanySettingsRequest, get_company_settings
 from gestor_inventory.application.inventory import ListInventoryRequest, list_inventory
 from gestor_inventory.application.list_branches import ListBranchesRequest, list_branches
 from gestor_inventory.application.list_rbac import (
@@ -34,6 +35,7 @@ from gestor_inventory.application.request_password_reset import RequestPasswordR
 from gestor_inventory.application.register_user import RegisterUserRequest, register_user
 from gestor_inventory.application.reset_password import ResetPasswordRequest, reset_password
 from gestor_inventory.application.update_branch import UpdateBranchRequest, update_branch
+from gestor_inventory.application.update_company_setting import UpdateCompanySettingsRequest, update_company_settings
 from gestor_inventory.application.verify_email import VerifyEmailRequest, verify_email
 from gestor_inventory.domain.errors import (
     BranchHasInventoryError,
@@ -69,6 +71,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/admin/branches":
             self._handle_list_branches(parsed.query)
+            return
+        if parsed.path == "/api/admin/settings":
+            self._handle_get_company_settings()
             return
         if parsed.path == "/api/admin/roles":
             self._handle_list_roles()
@@ -210,6 +215,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
 
     def do_PUT(self):
+        if self.path == "/api/admin/settings":
+            self._handle_update_company_settings()
+            return
         if self.path.startswith("/api/admin/branches/"):
             self._handle_update_branch(self.path)
             return
@@ -315,6 +323,60 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             details=json.dumps({"default_branch_id": default_branch_id}, separators=(",", ":")),
         )
         self._send_json(HTTPStatus.OK, {"status": "ok", "default_branch_id": default_branch_id})
+
+    def _handle_get_company_settings(self) -> None:
+        try:
+            authz = self._require_permissions({"configuracion:leer"})
+            if authz is None:
+                return
+            company_id = int(authz.get("company_id"))
+            res = get_company_settings(self.repo, GetCompanySettingsRequest(company_id=company_id))
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._send_json(
+            HTTPStatus.OK,
+            {"data": [{"key": s.setting_key, "value": s.setting_value} for s in res.settings]},
+        )
+
+    def _handle_update_company_settings(self) -> None:
+        try:
+            authz = self._require_permissions({"configuracion:editar"})
+            if authz is None:
+                return
+            company_id = int(authz.get("company_id"))
+            payload = self._read_json()
+            update_company_settings(
+                self.repo,
+                UpdateCompanySettingsRequest(company_id=company_id, settings=payload),
+            )
+        except json.JSONDecodeError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._audit_data(
+            authz,
+            action="UPDATE",
+            resource="configuracion",
+            details=json.dumps({"keys": sorted(list(payload.keys()))}, ensure_ascii=False, separators=(",", ":")),
+        )
+        self._send_json(HTTPStatus.OK, {"status": "ok"})
 
     def _handle_create_branch(self) -> None:
         try:

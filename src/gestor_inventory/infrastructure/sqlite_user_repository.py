@@ -4,6 +4,7 @@ import time
 
 from gestor_inventory.domain.errors import EmailAlreadyExistsError
 from gestor_inventory.domain.company import Company
+from gestor_inventory.domain.company_setting import CompanySetting
 from gestor_inventory.domain.operational import Branch, InventoryItem, InventoryMovement, Product
 from gestor_inventory.domain.operational import Category
 from gestor_inventory.domain.rbac import Permission, Role
@@ -783,6 +784,42 @@ class SqliteUserRepository:
                 raise sqlite3.IntegrityError("company not found")
             conn.commit()
 
+    def get_company_settings(self, *, company_id: int) -> list[CompanySetting]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, company_id, setting_key, setting_value, created_at, updated_at
+                FROM company_settings
+                WHERE company_id = ?
+                ORDER BY setting_key
+                """,
+                (int(company_id),),
+            ).fetchall()
+            return [
+                CompanySetting(
+                    id=int(setting_id),
+                    company_id=int(company_id_v),
+                    setting_key=str(setting_key),
+                    setting_value=str(setting_value),
+                    created_at=int(created_at),
+                    updated_at=int(updated_at),
+                )
+                for (setting_id, company_id_v, setting_key, setting_value, created_at, updated_at) in rows
+            ]
+
+    def upsert_company_setting(self, *, company_id: int, setting_key: str, setting_value: str, now: int) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO company_settings (company_id, setting_key, setting_value, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(company_id, setting_key)
+                DO UPDATE SET setting_value = excluded.setting_value, updated_at = excluded.updated_at
+                """,
+                (int(company_id), str(setting_key), str(setting_value), int(now), int(now)),
+            )
+            conn.commit()
+
     def upsert_inventory_item(
         self,
         *,
@@ -1032,6 +1069,8 @@ class SqliteUserRepository:
                 (502, "compras:aprobar", "Aprobar órdenes de compra"),
                 (600, "reportes:leer", "Leer reportes"),
                 (700, "configuracion:modificar", "Modificar configuración"),
+                (701, "configuracion:leer", "Leer configuración"),
+                (702, "configuracion:editar", "Editar configuración"),
                 (800, "empresas:crear", "Crear empresas"),
                 (801, "empresas:leer", "Leer empresas"),
                 (802, "empresas:editar", "Editar empresas"),
@@ -1099,6 +1138,18 @@ class SqliteUserRepository:
                   CONSTRAINT companies_default_branch_fk FOREIGN KEY (default_branch_id) REFERENCES branches (id)
                 );
                 CREATE INDEX IF NOT EXISTS companies_created_at_idx ON companies (created_at);
+
+                CREATE TABLE IF NOT EXISTS company_settings (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  company_id INTEGER NOT NULL,
+                  setting_key TEXT NOT NULL,
+                  setting_value TEXT NOT NULL,
+                  created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+                  updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+                  CONSTRAINT company_settings_company_fk FOREIGN KEY (company_id) REFERENCES companies (id) ON DELETE CASCADE,
+                  CONSTRAINT company_settings_company_key_unique UNIQUE (company_id, setting_key)
+                );
+                CREATE INDEX IF NOT EXISTS company_settings_company_id_idx ON company_settings (company_id);
 
                 CREATE TABLE IF NOT EXISTS users (
                   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1325,6 +1376,8 @@ class SqliteUserRepository:
                   (502, 'compras:aprobar', 'Aprobar órdenes de compra'),
                   (600, 'reportes:leer', 'Leer reportes'),
                   (700, 'configuracion:modificar', 'Modificar configuración'),
+                  (701, 'configuracion:leer', 'Leer configuración'),
+                  (702, 'configuracion:editar', 'Editar configuración'),
                   (800, 'empresas:crear', 'Crear empresas'),
                   (801, 'empresas:leer', 'Leer empresas'),
                   (802, 'empresas:editar', 'Editar empresas'),
