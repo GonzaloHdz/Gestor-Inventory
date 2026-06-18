@@ -7,7 +7,9 @@ from gestor_inventory.domain.operational import Category
 
 
 class CategoryRepository(Protocol):
-    def create_category(self, *, company_id: int, name: str, is_active: bool) -> Category: ...
+    def create_category(
+        self, *, company_id: int, name: str, description: str | None, status: str, is_active: bool | None = None
+    ) -> Category: ...
 
     def get_category_by_id(self, *, company_id: int, category_id: int) -> Category | None: ...
 
@@ -38,7 +40,7 @@ def create_category(repo: CategoryRepository, req: CreateCategoryRequest) -> Cre
     company_id = _validate_company_id(req.company_id)
     name = _validate_name(req.name)
     try:
-        category = repo.create_category(company_id=company_id, name=name, is_active=True)
+        category = repo.create_category(company_id=company_id, name=name, description=None, status="active", is_active=True)
     except sqlite3.IntegrityError:
         raise ValidationError("categoría ya existe") from None
     return CreateCategoryResponse(category=category)

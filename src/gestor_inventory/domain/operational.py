@@ -28,11 +28,21 @@ class Category:
     company_id: int
     id: int
     name: str
+    description: str | None
+    status: str
     is_active: bool
 
     def __post_init__(self) -> None:
         if not isinstance(self.company_id, int) or self.company_id <= 0:
             raise ValueError("company_id inválido")
+        if not isinstance(self.name, str) or not self.name.strip():
+            raise ValueError("name inválido")
+        if self.description is not None and (not isinstance(self.description, str) or not self.description.strip()):
+            raise ValueError("description inválido")
+        if not isinstance(self.status, str) or self.status not in ("active", "inactive"):
+            raise ValueError("status inválido")
+        if bool(self.is_active) != (self.status == "active"):
+            raise ValueError("inconsistencia status/is_active")
 
 
 @dataclass(frozen=True)

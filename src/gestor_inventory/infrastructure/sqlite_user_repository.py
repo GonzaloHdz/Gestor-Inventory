@@ -471,24 +471,43 @@ class SqliteUserRepository:
                 for (perm_id, code_v, description) in rows
             ]
 
-    def create_category(self, *, company_id: int, name: str, is_active: bool) -> Category:
+    def create_category(
+        self,
+        *,
+        company_id: int,
+        name: str,
+        description: str | None = None,
+        status: str = "active",
+        is_active: bool | None = None,
+    ) -> Category:
+        status_v = str(status)
+        if is_active is not None:
+            status_v = "active" if bool(is_active) else "inactive"
+        is_active_v = status_v == "active"
         with self._connect() as conn:
             cur = conn.execute(
                 """
-                INSERT INTO categories (company_id, name, is_active)
-                VALUES (?, ?, ?)
+                INSERT INTO categories (company_id, name, description, status, is_active)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (int(company_id), str(name), 1 if is_active else 0),
+                (int(company_id), str(name), (str(description) if description is not None else None), str(status_v), 1 if is_active_v else 0),
             )
             category_id = int(cur.lastrowid)
             conn.commit()
-            return Category(company_id=int(company_id), id=category_id, name=str(name), is_active=bool(is_active))
+            return Category(
+                company_id=int(company_id),
+                id=category_id,
+                name=str(name),
+                description=(str(description) if description is not None else None),
+                status=str(status_v),
+                is_active=bool(is_active_v),
+            )
 
     def get_category_by_id(self, *, company_id: int, category_id: int) -> Category | None:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT company_id, id, name, is_active
+                SELECT company_id, id, name, description, status, is_active
                 FROM categories
                 WHERE company_id = ? AND id = ?
                 LIMIT 1
@@ -497,8 +516,42 @@ class SqliteUserRepository:
             ).fetchone()
             if row is None:
                 return None
-            company_id_v, category_id_v, name, is_active = row
-            return Category(company_id=int(company_id_v), id=int(category_id_v), name=str(name), is_active=bool(is_active))
+            company_id_v, category_id_v, name, description, status, is_active = row
+            status_v = str(status) if status is not None else ("active" if bool(is_active) else "inactive")
+            description_v = str(description) if description is not None else None
+            return Category(
+                company_id=int(company_id_v),
+                id=int(category_id_v),
+                name=str(name),
+                description=description_v,
+                status=status_v,
+                is_active=bool(is_active),
+            )
+
+    def list_categories(self, *, company_id: int, status: str | None) -> list[Category]:
+        with self._connect() as conn:
+            sql = """
+            SELECT company_id, id, name, description, status, is_active
+            FROM categories
+            WHERE company_id = ?
+            """
+            params: list[object] = [int(company_id)]
+            if status is not None:
+                sql += " AND status = ?"
+                params.append(str(status))
+            sql += " ORDER BY id"
+            rows = conn.execute(sql, params).fetchall()
+            return [
+                Category(
+                    company_id=int(company_id_v),
+                    id=int(category_id_v),
+                    name=str(name_v),
+                    description=str(description_v) if description_v is not None else None,
+                    status=str(status_v) if status_v is not None else ("active" if bool(is_active_v) else "inactive"),
+                    is_active=bool(is_active_v),
+                )
+                for (company_id_v, category_id_v, name_v, description_v, status_v, is_active_v) in rows
+            ]
 
     def create_branch(
         self,
@@ -1455,11 +1508,15 @@ class SqliteUserRepository:
                   id INTEGER PRIMARY KEY AUTOINCREMENT,
                   company_id INTEGER NOT NULL,
                   name TEXT NOT NULL,
+                  description TEXT NULL,
+                  status TEXT NOT NULL DEFAULT 'active',
                   is_active INTEGER NOT NULL DEFAULT 1,
                   CONSTRAINT categories_company_id_id_unique UNIQUE (company_id, id),
-                  CONSTRAINT categories_company_name_unique UNIQUE (company_id, name)
+                  CONSTRAINT categories_company_name_unique UNIQUE (company_id, name),
+                  CONSTRAINT categories_company_fk FOREIGN KEY (company_id) REFERENCES companies (id) ON DELETE CASCADE
                 );
                 CREATE INDEX IF NOT EXISTS categories_company_id_idx ON categories (company_id);
+                CREATE INDEX IF NOT EXISTS idx_categories_company_id ON categories (company_id);
 
                 CREATE TABLE IF NOT EXISTS products (
                   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1728,6 +1785,11 @@ class SqliteUserRepository:
                 conn.execute("ALTER TABLE branches ADD COLUMN country TEXT NULL")
             if "status" not in branch_cols:
                 conn.execute("ALTER TABLE branches ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
+            category_cols = [row[1] for row in conn.execute("PRAGMA table_info(categories)").fetchall()]
+            if "description" not in category_cols:
+                conn.execute("ALTER TABLE categories ADD COLUMN description TEXT NULL")
+            if "status" not in category_cols:
+                conn.execute("ALTER TABLE categories ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
             conn.execute(
                 """
                 INSERT OR IGNORE INTO companies (id, name, currency, timezone, status, created_at, default_branch_id)
