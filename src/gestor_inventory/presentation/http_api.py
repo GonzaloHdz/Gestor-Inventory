@@ -24,6 +24,7 @@ from gestor_inventory.application.list_rbac import (
     list_roles,
 )
 from gestor_inventory.application.products import CreateProductRequest, create_product
+from gestor_inventory.application.create_supplier import CreateSupplierRequest, create_supplier
 from gestor_inventory.application.list_companies import ListCompaniesRequest, list_companies
 from gestor_inventory.application.manage_user_roles import (
     AssignUserRoleRequest,
@@ -202,6 +203,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/admin/products":
             self._handle_create_product()
+            return
+        if self.path == "/api/admin/suppliers":
+            self._handle_create_supplier()
             return
         if self.path == "/api/auth/password-reset/request":
             self._handle_password_reset_request()
@@ -850,6 +854,63 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                     "name": p.name,
                     "description": p.description,
                     "is_active": p.is_active,
+                }
+            },
+        )
+
+    def _handle_create_supplier(self) -> None:
+        try:
+            payload = self._read_json()
+            authz = self._require_permissions({"proveedores:crear"})
+            if authz is None:
+                return
+            company_id = int(authz.get("company_id"))
+            res = create_supplier(
+                self.repo,
+                CreateSupplierRequest(
+                    company_id=company_id,
+                    name=payload["name"],
+                    document_id=payload.get("document_id"),
+                    contact_email=payload.get("contact_email"),
+                    phone=payload.get("phone"),
+                ),
+            )
+        except KeyError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except json.JSONDecodeError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        s = res.supplier
+        self._audit_data(
+            authz,
+            action="CREATE",
+            resource="proveedores",
+            details=json.dumps({"supplier_id": s.id}, separators=(",", ":")),
+        )
+        self._send_json(
+            HTTPStatus.CREATED,
+            {
+                "supplier": {
+                    "company_id": s.company_id,
+                    "id": s.id,
+                    "name": s.name,
+                    "document_id": s.document_id,
+                    "contact_email": s.contact_email,
+                    "phone": s.phone,
+                    "status": s.status,
+                    "created_at": s.created_at,
+                    "updated_at": s.updated_at,
                 }
             },
         )
