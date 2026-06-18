@@ -6,7 +6,7 @@ import threading
 import unittest
 from http.server import ThreadingHTTPServer
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 SRC = os.path.join(ROOT, "src")
 sys.path.insert(0, SRC)
 
@@ -72,12 +72,11 @@ class AuthorizationIntegrationTests(unittest.TestCase):
         HttpApiHandler.repo = self._prev_repo
         HttpApiHandler.jwt_expiration_minutes = self._prev_exp
 
-    def _token_for(self, *, user_id: int, company_id: int, email: str) -> str:
-        return create_jwt_hs256(
-            {"sub": str(user_id), "company_id": int(company_id), "email": str(email)},
-            secret="test-secret",
-            expires_in_seconds=60,
-        )
+    def _token_for(self, *, user_id: int, company_id: int, email: str, branch_id: int | None = None) -> str:
+        claims = {"sub": str(user_id), "company_id": int(company_id), "email": str(email)}
+        if branch_id is not None:
+            claims["branch_id"] = int(branch_id)
+        return create_jwt_hs256(claims, secret="test-secret", expires_in_seconds=60)
 
     def _get(self, path: str, token: str | None) -> tuple[int, dict]:
         conn = http.client.HTTPConnection(self.base[0], self.base[1], timeout=2)
@@ -350,6 +349,54 @@ class AuthorizationIntegrationTests(unittest.TestCase):
         status_cross, _ = self._get(f"/api/inventory?branch_id={branch2_other.id}", token=token)
         self.assertEqual(status_cross, 404)
 
+    def test_branch_level_isolation_denies_cross_branch_for_operational_user(self):
+        branch1 = self.repo.create_branch(company_id=1, name="Sucursal 1", address=None, is_active=True)
+        branch2 = self.repo.create_branch(company_id=1, name="Sucursal 2", address=None, is_active=True)
+        product = self.repo.create_product(company_id=1, category_id=None, sku="SKU-BR", name="Prod BR", description=None, is_active=True)
+        self.repo.upsert_inventory_item(
+            company_id=1, branch_id=branch1.id, product_id=product.id, quantity=1, min_quantity=0, updated_at=123
+        )
+        self.repo.upsert_inventory_item(
+            company_id=1, branch_id=branch2.id, product_id=product.id, quantity=2, min_quantity=0, updated_at=124
+        )
+
+        almacenista_company1 = self.users[(1, 10)]
+        token = self._token_for(
+            user_id=almacenista_company1.id,
+            company_id=1,
+            email=almacenista_company1.email,
+            branch_id=branch1.id,
+        )
+
+        status_ok, _ = self._get(f"/api/inventory?branch_id={branch1.id}", token=token)
+        self.assertEqual(status_ok, 200)
+
+        status_forbidden, body_forbidden = self._get(f"/api/inventory?branch_id={branch2.id}", token=token)
+        self.assertEqual(status_forbidden, 403)
+        self.assertEqual(body_forbidden.get("error"), "forbidden")
+
+    def test_branch_level_isolation_allows_admin_across_branches(self):
+        branch1 = self.repo.create_branch(company_id=1, name="Sucursal 1 Admin", address=None, is_active=True)
+        branch2 = self.repo.create_branch(company_id=1, name="Sucursal 2 Admin", address=None, is_active=True)
+        product = self.repo.create_product(company_id=1, category_id=None, sku="SKU-ADM", name="Prod ADM", description=None, is_active=True)
+        self.repo.upsert_inventory_item(
+            company_id=1, branch_id=branch1.id, product_id=product.id, quantity=3, min_quantity=0, updated_at=125
+        )
+        self.repo.upsert_inventory_item(
+            company_id=1, branch_id=branch2.id, product_id=product.id, quantity=4, min_quantity=0, updated_at=126
+        )
+
+        admin_company1 = self.users[(1, 12)]
+        token = self._token_for(user_id=admin_company1.id, company_id=1, email=admin_company1.email)
+
+        status1, body1 = self._get(f"/api/inventory?branch_id={branch1.id}", token=token)
+        self.assertEqual(status1, 200)
+        self.assertTrue(all(i.get("company_id") == 1 and i.get("branch_id") == branch1.id for i in body1.get("items", [])))
+
+        status2, body2 = self._get(f"/api/inventory?branch_id={branch2.id}", token=token)
+        self.assertEqual(status2, 200)
+        self.assertTrue(all(i.get("company_id") == 1 and i.get("branch_id") == branch2.id for i in body2.get("items", [])))
+
     def test_role_assignment_is_audited(self):
         admin_company1 = self.users[(1, 12)]
         token = self._token_for(user_id=admin_company1.id, company_id=1, email=admin_company1.email)
@@ -414,10 +461,11 @@ class AuthorizationIntegrationTests(unittest.TestCase):
         superadmin_company1 = self.users[(1, 13)]
         token = self._token_for(user_id=superadmin_company1.id, company_id=1, email=superadmin_company1.email)
 
+        initial_total = len(self._companies())
         for i in range(12):
             status_c, _ = self._post(
                 "/api/admin/companies",
-                {"name": f"Empresa {i}", "currency": "USD", "timezone": "UTC"},
+                {"name": f"Empresa Test {i}", "currency": "USD", "timezone": "UTC"},
                 token=token,
             )
             self.assertEqual(status_c, 201)
@@ -426,7 +474,7 @@ class AuthorizationIntegrationTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIsInstance(body.get("data"), list)
         self.assertEqual(len(body["data"]), 10)
-        self.assertEqual(body.get("pagination", {}).get("total"), 12)
+        self.assertEqual(body.get("pagination", {}).get("total"), initial_total + 12)
         self.assertEqual(body.get("pagination", {}).get("page"), 1)
         self.assertEqual(body.get("pagination", {}).get("per_page"), 10)
         self.assertEqual(body.get("pagination", {}).get("pages"), 2)

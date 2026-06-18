@@ -14,7 +14,9 @@ from gestor_inventory.domain.user import User
 class SqliteUserRepository:
     def __init__(self, db_path: str):
         self._db_path = db_path
-        self._persistent_conn = sqlite3.connect(":memory:") if db_path == ":memory:" else None
+        self._persistent_conn = (
+            sqlite3.connect(":memory:", check_same_thread=False) if db_path == ":memory:" else None
+        )
         if self._persistent_conn is not None:
             self._persistent_conn.execute("PRAGMA foreign_keys = ON")
         self._init_schema()

@@ -99,11 +99,11 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             city = (params.get("city") or [None])[0]
             status = (params.get("status") or [None])[0]
             res = list_branches(self.repo, ListBranchesRequest(company_id=company_id, city=city, status=status))
-        except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
-            return
         except ValidationError as e:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
             return
         except Exception:
             self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
@@ -144,11 +144,11 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             page = int(page_raw)
             per_page = int(per_page_raw)
             res = list_companies(self.repo, ListCompaniesRequest(page=page, per_page=per_page))
-        except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
-            return
         except ValidationError as e:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
             return
         except Exception:
             self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
@@ -303,11 +303,11 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 self.repo,
                 SetCompanyDefaultBranchRequest(company_id=company_id, default_branch_id=default_branch_id),
             )
-        except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
-            return
         except ValidationError as e:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
             return
         except json.JSONDecodeError:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
@@ -331,11 +331,11 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 return
             company_id = int(authz.get("company_id"))
             res = get_company_settings(self.repo, GetCompanySettingsRequest(company_id=company_id))
-        except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
-            return
         except ValidationError as e:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
             return
         except Exception:
             self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
@@ -360,11 +360,11 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
             return
-        except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
-            return
         except ValidationError as e:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
             return
         except Exception:
             self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
@@ -452,14 +452,14 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                     country=payload.get("country"),
                 ),
             )
-        except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
-            return
         except NotFoundError:
             self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
             return
         except ValidationError as e:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
             return
         except json.JSONDecodeError:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
@@ -500,9 +500,6 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             raw_id = path.removeprefix("/api/admin/branches/").strip("/")
             branch_id = int(raw_id)
             res = deactivate_branch(self.repo, DeactivateBranchRequest(company_id=company_id, branch_id=branch_id))
-        except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
-            return
         except BranchHasInventoryError:
             self._send_json(HTTPStatus.CONFLICT, {"error": "branch_has_inventory"})
             return
@@ -511,6 +508,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             return
         except ValidationError as e:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
             return
         except Exception:
             self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
@@ -638,11 +638,11 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 return
             company_id = int(authz.get("company_id"))
             res = list_roles(self.repo, ListRolesRequest(company_id=company_id))
-        except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
-            return
         except ValidationError as e:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
             return
         except Exception:
             self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
@@ -684,16 +684,24 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             company_id = int(authz.get("company_id"))
             params = parse_qs(query, keep_blank_values=True)
             branch_id_raw = (params.get("branch_id") or [None])[0]
-            branch_id = int(branch_id_raw)
+            if branch_id_raw is None:
+                token_branch_id = authz.get("branch_id")
+                if token_branch_id is None:
+                    raise ValueError("missing branch_id")
+                branch_id = int(token_branch_id)
+            else:
+                branch_id = int(branch_id_raw)
+            if not self._require_branch_access(authz, branch_id):
+                return
             res = list_inventory(self.repo, ListInventoryRequest(company_id=company_id, branch_id=branch_id))
-        except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
-            return
         except NotFoundError:
             self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
             return
         except ValidationError as e:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
             return
         except Exception:
             self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
@@ -731,14 +739,14 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             raw_id = path.removeprefix("/api/admin/categories/").strip("/")
             category_id = int(raw_id)
             res = get_category(self.repo, GetCategoryRequest(company_id=company_id, category_id=category_id))
-        except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
-            return
         except NotFoundError:
             self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
             return
         except ValidationError as e:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
             return
         except Exception:
             self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
@@ -765,11 +773,11 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         except KeyError:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
             return
-        except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
-            return
         except ValidationError as e:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
             return
         except json.JSONDecodeError:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
@@ -811,11 +819,11 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         except KeyError:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
             return
-        except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
-            return
         except ValidationError as e:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
             return
         except json.JSONDecodeError:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
@@ -915,14 +923,14 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         except KeyError:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
             return
-        except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
-            return
         except NotFoundError as e:
             self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found", "message": str(e)})
             return
         except ValidationError as e:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
             return
         except json.JSONDecodeError:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
@@ -958,14 +966,14 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         except KeyError:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
             return
-        except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
-            return
         except NotFoundError as e:
             self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found", "message": str(e)})
             return
         except ValidationError as e:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
             return
         except json.JSONDecodeError:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
@@ -1041,6 +1049,24 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             return None
 
         return payload
+
+    def _require_branch_access(self, authz_payload: dict, target_branch_id: int) -> bool:
+        branch_claim = authz_payload.get("branch_id")
+        if branch_claim is None:
+            return True
+        if isinstance(branch_claim, str) and branch_claim.strip().lower() in ("", "all", "todas", "any"):
+            return True
+        try:
+            actor_branch_id = int(branch_claim)
+        except Exception:
+            self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": "Acceso denegado a esta sucursal"})
+            return False
+        if actor_branch_id <= 0:
+            return True
+        if int(actor_branch_id) != int(target_branch_id):
+            self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": "Acceso denegado a esta sucursal"})
+            return False
+        return True
 
     def _audit_data(self, authz_payload: dict, *, action: str, resource: str, details: str | None) -> None:
         if not hasattr(self.repo, "create_data_audit_log"):

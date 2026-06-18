@@ -8,6 +8,24 @@ Principios
 - Multiempresa: las operaciones deben ejecutarse en el `company_id` del token (y validarse contra la BD cuando aplique).
 - Endpoints administrativos (`/api/admin/*`): si no existe permiso definido para una ruta crítica, se deniega con 403 (Forbidden).
 
+Política de Acceso (Contrato): Empresa y Sucursal
+-------------------------------------------------
+
+Nivel 1 (Aislamiento Tenant / Empresa)
+
+- Toda operación se ejecuta en el `company_id` del token.
+- Todas las lecturas/escrituras deben filtrar por `company_id`. No hay excepciones.
+
+Nivel 2 (Aislamiento por Sucursal)
+
+- Si el token trae un `branch_id` específico (roles operativos como Almacenista/Vendedor), el usuario queda restringido a esa sucursal dentro de su `company_id`.
+- Si el token no trae `branch_id` (o es equivalente a “todas”), el usuario puede operar en cualquier sucursal del mismo `company_id`.
+- Para endpoints que operan sobre una sucursal destino (`target_branch_id`), si `authz.branch_id` existe y es diferente a `target_branch_id`, la API debe responder 403 Forbidden con el mensaje: "Acceso denegado a esta sucursal".
+
+Implementación (Helper de Autorización)
+
+- La validación se realiza en la capa de presentación (HTTP) con `_require_branch_access(authz, target_branch_id)` y se aplica antes de ejecutar el caso de uso o como filtro dinámico en la consulta (ej. `WHERE branch_id = authz.branch_id`).
+
 Mapa de permisos por operación (MVP)
 -----------------------------------
 

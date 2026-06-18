@@ -6,7 +6,7 @@ import threading
 import unittest
 from http.server import ThreadingHTTPServer
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 SRC = os.path.join(ROOT, "src")
 sys.path.insert(0, SRC)
 
