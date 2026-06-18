@@ -9,6 +9,10 @@ class Branch:
     address: str | None
     is_active: bool
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.company_id, int) or self.company_id <= 0:
+            raise ValueError("company_id inválido")
+
 
 @dataclass(frozen=True)
 class Category:
@@ -16,6 +20,10 @@ class Category:
     id: int
     name: str
     is_active: bool
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.company_id, int) or self.company_id <= 0:
+            raise ValueError("company_id inválido")
 
 
 @dataclass(frozen=True)
@@ -28,6 +36,10 @@ class Product:
     description: str | None
     is_active: bool
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.company_id, int) or self.company_id <= 0:
+            raise ValueError("company_id inválido")
+
 
 @dataclass(frozen=True)
 class InventoryItem:
@@ -37,6 +49,12 @@ class InventoryItem:
     quantity: int
     min_quantity: int
     updated_at: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.company_id, int) or self.company_id <= 0:
+            raise ValueError("company_id inválido")
+        if not isinstance(self.branch_id, int) or self.branch_id <= 0:
+            raise ValueError("branch_id inválido")
 
 
 @dataclass(frozen=True)
@@ -50,3 +68,9 @@ class InventoryMovement:
     quantity: int
     reference: str | None
     created_at: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.company_id, int) or self.company_id <= 0:
+            raise ValueError("company_id inválido")
+        if not isinstance(self.branch_id, int) or self.branch_id <= 0:
+            raise ValueError("branch_id inválido")

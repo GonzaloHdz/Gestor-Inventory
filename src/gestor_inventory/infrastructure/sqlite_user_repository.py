@@ -554,6 +554,14 @@ class SqliteUserRepository:
                 is_active=bool(is_active),
             )
 
+    def company_is_active(self, *, company_id: int) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM companies WHERE id = ? AND status = 'active' LIMIT 1",
+                (int(company_id),),
+            ).fetchone()
+            return row is not None
+
     def company_name_exists(self, *, name: str) -> bool:
         with self._connect() as conn:
             row = conn.execute("SELECT 1 FROM companies WHERE name = ? LIMIT 1", (str(name),)).fetchone()
@@ -859,6 +867,7 @@ class SqliteUserRepository:
                 (700, "configuracion:modificar", "Modificar configuración"),
                 (800, "empresas:crear", "Crear empresas"),
                 (801, "empresas:leer", "Leer empresas"),
+                (810, "sucursal:crear", "Crear sucursales"),
             ],
         )
         conn.execute(
@@ -1139,7 +1148,8 @@ class SqliteUserRepository:
                   (600, 'reportes:leer', 'Leer reportes'),
                   (700, 'configuracion:modificar', 'Modificar configuración'),
                   (800, 'empresas:crear', 'Crear empresas'),
-                  (801, 'empresas:leer', 'Leer empresas');
+                  (801, 'empresas:leer', 'Leer empresas'),
+                  (810, 'sucursal:crear', 'Crear sucursales');
 
                 INSERT OR IGNORE INTO role_permissions (company_id, role_id, permission_id)
                 SELECT r.company_id, r.id, p.id
@@ -1170,4 +1180,12 @@ class SqliteUserRepository:
             cols = [row[1] for row in conn.execute("PRAGMA table_info(companies)").fetchall()]
             if "status" not in cols:
                 conn.execute("ALTER TABLE companies ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO companies (id, name, currency, timezone, status, created_at)
+                VALUES
+                  (1, 'Empresa 1', 'USD', 'UTC', 'active', strftime('%s','now')),
+                  (2, 'Empresa 2', 'USD', 'UTC', 'active', strftime('%s','now'))
+                """
+            )
             conn.commit()

@@ -6,6 +6,10 @@ class WeakPasswordError(ValidationError):
     pass
 
 
+class CrossTenantReferenceError(ValidationError):
+    pass
+
+
 class ForbiddenError(Exception):
     pass
 

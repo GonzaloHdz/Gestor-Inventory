@@ -200,6 +200,30 @@ class AuthorizationIntegrationTests(unittest.TestCase):
         logs = self._data_audit_logs()
         self.assertTrue(any(l["company_id"] == 1 and l["user_id"] == admin_company1.id and l["action"] == "CREATE" and l["resource"] == "categorias" for l in logs))
 
+    def test_create_branch_requires_permission(self):
+        almacenista_company1 = self.users[(1, 10)]
+        token = self._token_for(user_id=almacenista_company1.id, company_id=1, email=almacenista_company1.email)
+        status, _ = self._post("/api/admin/branches", {"name": "Sucursal A"}, token=token)
+        self.assertEqual(status, 403)
+
+        admin_company1 = self.users[(1, 12)]
+        token_admin = self._token_for(user_id=admin_company1.id, company_id=1, email=admin_company1.email)
+        status_ok, body_ok = self._post("/api/admin/branches", {"name": "Sucursal A"}, token=token_admin)
+        self.assertEqual(status_ok, 201)
+        self.assertEqual(body_ok.get("branch", {}).get("company_id"), 1)
+
+    def test_cross_tenant_category_reference_is_rejected_on_product_create(self):
+        category_company2 = self.repo.create_category(company_id=2, name="Cat 2", is_active=True)
+        admin_company1 = self.users[(1, 12)]
+        token = self._token_for(user_id=admin_company1.id, company_id=1, email=admin_company1.email)
+        status, body = self._post(
+            "/api/admin/products",
+            {"sku": "SKU-X", "name": "Producto X", "category_id": category_company2.id},
+            token=token,
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(body.get("error"), "validation_error")
+
     def test_inventory_endpoint_requires_token_and_filters_by_company_and_branch(self):
         status_unauth, _ = self._get("/api/inventory?branch_id=1", token=None)
         self.assertEqual(status_unauth, 401)

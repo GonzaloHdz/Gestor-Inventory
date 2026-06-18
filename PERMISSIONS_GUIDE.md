@@ -30,12 +30,12 @@ Empresas / Sucursales (planificado)
 - Crear empresa (POST /api/admin/companies): empresas:crear
 - Listar empresas (GET /api/admin/companies): empresas:leer
 - Editar empresa: empresa:editar
-- Crear sucursal: sucursal:crear
+- Crear sucursal (POST /api/admin/branches): sucursal:crear
 - Editar sucursal: sucursal:editar
 
 Inventario / Productos (planificado)
 
 - Modificar inventario (entradas/salidas/ajustes): inventario:modificar
-- Crear producto: productos:crear
+- Crear producto (POST /api/admin/products): productos:crear
 - Modificar producto: productos:modificar
 - Eliminar producto: productos:eliminar

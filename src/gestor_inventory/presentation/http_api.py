@@ -11,6 +11,7 @@ from gestor_inventory.application.categories import (
     create_category,
     get_category,
 )
+from gestor_inventory.application.branches import CreateBranchRequest, create_branch
 from gestor_inventory.application.create_company import CreateCompanyRequest, create_company
 from gestor_inventory.application.inventory import ListInventoryRequest, list_inventory
 from gestor_inventory.application.list_rbac import (
@@ -18,6 +19,7 @@ from gestor_inventory.application.list_rbac import (
     list_permissions,
     list_roles,
 )
+from gestor_inventory.application.products import CreateProductRequest, create_product
 from gestor_inventory.application.list_companies import ListCompaniesRequest, list_companies
 from gestor_inventory.application.manage_user_roles import (
     AssignUserRoleRequest,
@@ -135,8 +137,14 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         if self.path == "/api/admin/companies":
             self._handle_create_company()
             return
+        if self.path == "/api/admin/branches":
+            self._handle_create_branch()
+            return
         if self.path == "/api/admin/categories":
             self._handle_create_category()
+            return
+        if self.path == "/api/admin/products":
+            self._handle_create_product()
             return
         if self.path == "/api/auth/password-reset/request":
             self._handle_password_reset_request()
@@ -194,6 +202,42 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             ),
         )
         self._send_json(HTTPStatus.CREATED, {"company_id": res.company.id})
+
+    def _handle_create_branch(self) -> None:
+        try:
+            payload = self._read_json()
+            authz = self._require_permissions({"sucursal:crear"})
+            if authz is None:
+                return
+            company_id = int(authz.get("company_id"))
+            res = create_branch(
+                self.repo,
+                CreateBranchRequest(company_id=company_id, name=payload["name"], address=payload.get("address")),
+            )
+        except KeyError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except json.JSONDecodeError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        b = res.branch
+        self._audit_data(
+            authz,
+            action="CREATE",
+            resource="sucursales",
+            details=json.dumps({"branch_id": b.id, "name": b.name}, separators=(",", ":")),
+        )
+        self._send_json(
+            HTTPStatus.CREATED,
+            {"branch": {"company_id": b.company_id, "id": b.id, "name": b.name, "address": b.address, "is_active": b.is_active}},
+        )
 
     def _handle_register(self) -> None:
         try:
@@ -459,6 +503,62 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         self._send_json(
             HTTPStatus.CREATED,
             {"category": {"company_id": c.company_id, "id": c.id, "name": c.name, "is_active": c.is_active}},
+        )
+
+    def _handle_create_product(self) -> None:
+        try:
+            payload = self._read_json()
+            authz = self._require_permissions({"productos:crear"})
+            if authz is None:
+                return
+            company_id = int(authz.get("company_id"))
+            category_id_raw = payload.get("category_id")
+            res = create_product(
+                self.repo,
+                CreateProductRequest(
+                    company_id=company_id,
+                    sku=payload["sku"],
+                    name=payload["name"],
+                    category_id=(int(category_id_raw) if category_id_raw is not None else None),
+                    description=payload.get("description"),
+                ),
+            )
+        except KeyError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except json.JSONDecodeError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        p = res.product
+        self._audit_data(
+            authz,
+            action="CREATE",
+            resource="productos",
+            details=json.dumps({"product_id": p.id, "sku": p.sku, "category_id": p.category_id}, separators=(",", ":")),
+        )
+        self._send_json(
+            HTTPStatus.CREATED,
+            {
+                "product": {
+                    "company_id": p.company_id,
+                    "id": p.id,
+                    "category_id": p.category_id,
+                    "sku": p.sku,
+                    "name": p.name,
+                    "description": p.description,
+                    "is_active": p.is_active,
+                }
+            },
         )
 
     def _handle_password_reset_request(self) -> None:
