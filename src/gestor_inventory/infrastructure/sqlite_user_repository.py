@@ -789,6 +789,84 @@ class SqliteUserRepository:
                 updated_at=int(updated_at),
             )
 
+    def count_suppliers(
+        self,
+        *,
+        company_id: int,
+        name: str | None,
+        document_id: str | None,
+        status: str | None,
+    ) -> int:
+        with self._connect() as conn:
+            sql = "SELECT COUNT(1) FROM suppliers WHERE company_id = ?"
+            params: list[object] = [int(company_id)]
+            if name is not None:
+                sql += " AND name LIKE ?"
+                params.append(f"%{str(name)}%")
+            if document_id is not None:
+                sql += " AND document_id = ?"
+                params.append(str(document_id))
+            if status is not None:
+                sql += " AND status = ?"
+                params.append(str(status))
+            row = conn.execute(sql, params).fetchone()
+            return 0 if row is None else int(row[0])
+
+    def list_suppliers(
+        self,
+        *,
+        company_id: int,
+        name: str | None,
+        document_id: str | None,
+        status: str | None,
+        limit: int,
+        offset: int,
+    ) -> list[Supplier]:
+        with self._connect() as conn:
+            sql = """
+            SELECT company_id, id, name, document_id, contact_email, phone, status, created_at, updated_at
+            FROM suppliers
+            WHERE company_id = ?
+            """
+            params: list[object] = [int(company_id)]
+            if name is not None:
+                sql += " AND name LIKE ?"
+                params.append(f"%{str(name)}%")
+            if document_id is not None:
+                sql += " AND document_id = ?"
+                params.append(str(document_id))
+            if status is not None:
+                sql += " AND status = ?"
+                params.append(str(status))
+            sql += " ORDER BY id LIMIT ? OFFSET ?"
+            params.append(int(limit))
+            params.append(int(offset))
+            rows = conn.execute(sql, params).fetchall()
+            return [
+                Supplier(
+                    company_id=int(company_id_v),
+                    id=int(supplier_id),
+                    name=str(name_v),
+                    document_id=str(document_id_v) if document_id_v is not None else None,
+                    contact_email=str(contact_email) if contact_email is not None else None,
+                    phone=str(phone) if phone is not None else None,
+                    status=str(status_v),
+                    created_at=int(created_at),
+                    updated_at=int(updated_at),
+                )
+                for (
+                    company_id_v,
+                    supplier_id,
+                    name_v,
+                    document_id_v,
+                    contact_email,
+                    phone,
+                    status_v,
+                    created_at,
+                    updated_at,
+                ) in rows
+            ]
+
     def count_active_companies(self) -> int:
         with self._connect() as conn:
             row = conn.execute("SELECT COUNT(1) FROM companies WHERE status = 'active'").fetchone()

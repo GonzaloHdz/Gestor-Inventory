@@ -26,6 +26,7 @@ from gestor_inventory.application.list_rbac import (
 from gestor_inventory.application.products import CreateProductRequest, create_product
 from gestor_inventory.application.create_supplier import CreateSupplierRequest, create_supplier
 from gestor_inventory.application.list_companies import ListCompaniesRequest, list_companies
+from gestor_inventory.application.list_suppliers import ListSuppliersRequest, list_suppliers
 from gestor_inventory.application.manage_user_roles import (
     AssignUserRoleRequest,
     RevokeUserRoleRequest,
@@ -72,6 +73,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/admin/branches":
             self._handle_list_branches(parsed.query)
+            return
+        if parsed.path == "/api/admin/suppliers":
+            self._handle_list_suppliers(parsed.query)
             return
         if parsed.path == "/api/admin/settings":
             self._handle_get_company_settings()
@@ -131,6 +135,79 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                     }
                     for b in res.branches
                 ]
+            },
+        )
+
+    def _handle_list_suppliers(self, query: str) -> None:
+        try:
+            authz = self._require_permissions({"proveedores:leer"})
+            if authz is None:
+                return
+            company_id = int(authz.get("company_id"))
+            params = parse_qs(query, keep_blank_values=True)
+            name = (params.get("name") or [None])[0]
+            document_id = (params.get("document_id") or [None])[0]
+            status_raw = (params.get("status") or [None])[0]
+            page_raw = (params.get("page") or ["1"])[0]
+            per_page_raw = (params.get("per_page") or ["50"])[0]
+            page = int(page_raw)
+            per_page = int(per_page_raw)
+            status = "active" if status_raw is None else status_raw
+            if isinstance(status, str) and status.strip().lower() in ("", "all", "todas", "any"):
+                status = None
+            res = list_suppliers(
+                self.repo,
+                ListSuppliersRequest(
+                    company_id=company_id,
+                    name=name,
+                    document_id=document_id,
+                    status=status,
+                    page=page,
+                    per_page=per_page,
+                ),
+            )
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._audit_data(
+            authz,
+            action="READ",
+            resource="proveedores",
+            details=json.dumps(
+                {"returned": len(res.suppliers), "page": res.page, "per_page": res.per_page},
+                separators=(",", ":"),
+            ),
+        )
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "data": [
+                    {
+                        "company_id": s.company_id,
+                        "id": s.id,
+                        "name": s.name,
+                        "document_id": s.document_id,
+                        "contact_email": s.contact_email,
+                        "phone": s.phone,
+                        "status": s.status,
+                        "created_at": s.created_at,
+                        "updated_at": s.updated_at,
+                    }
+                    for s in res.suppliers
+                ],
+                "pagination": {
+                    "total": res.total,
+                    "page": res.page,
+                    "per_page": res.per_page,
+                    "pages": res.pages,
+                },
             },
         )
 
