@@ -7,6 +7,7 @@ from gestor_inventory.domain.company import Company
 from gestor_inventory.domain.company_setting import CompanySetting
 from gestor_inventory.domain.operational import Branch, InventoryItem, InventoryMovement, Product, Supplier
 from gestor_inventory.domain.operational import Category
+from gestor_inventory.domain.purchases import PurchaseOrder
 from gestor_inventory.domain.rbac import Permission, Role
 from gestor_inventory.domain.user import User
 
@@ -867,6 +868,55 @@ class SqliteUserRepository:
                 ) in rows
             ]
 
+    def supplier_exists(self, *, supplier_id: int) -> bool:
+        with self._connect() as conn:
+            row = conn.execute("SELECT 1 FROM suppliers WHERE id = ? LIMIT 1", (int(supplier_id),)).fetchone()
+            return row is not None
+
+    def supplier_belongs_to_company(self, *, company_id: int, supplier_id: int) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM suppliers WHERE company_id = ? AND id = ? LIMIT 1",
+                (int(company_id), int(supplier_id)),
+            ).fetchone()
+            return row is not None
+
+    def supplier_is_active(self, *, company_id: int, supplier_id: int) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM suppliers WHERE company_id = ? AND id = ? AND status = 'active' LIMIT 1",
+                (int(company_id), int(supplier_id)),
+            ).fetchone()
+            return row is not None
+
+    def create_purchase_order(
+        self,
+        *,
+        company_id: int,
+        supplier_id: int,
+        status: str,
+        created_at: int,
+        updated_at: int,
+    ) -> PurchaseOrder:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO purchase_orders (company_id, supplier_id, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (int(company_id), int(supplier_id), str(status), int(created_at), int(updated_at)),
+            )
+            po_id = int(cur.lastrowid)
+            conn.commit()
+            return PurchaseOrder(
+                company_id=int(company_id),
+                id=po_id,
+                supplier_id=int(supplier_id),
+                status=str(status),
+                created_at=int(created_at),
+                updated_at=int(updated_at),
+            )
+
     def count_active_companies(self) -> int:
         with self._connect() as conn:
             row = conn.execute("SELECT COUNT(1) FROM companies WHERE status = 'active'").fetchone()
@@ -1337,10 +1387,24 @@ class SqliteUserRepository:
                   status TEXT NOT NULL DEFAULT 'active',
                   created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
                   updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+                  CONSTRAINT suppliers_company_id_id_unique UNIQUE (company_id, id),
                   CONSTRAINT suppliers_company_fk FOREIGN KEY (company_id) REFERENCES companies (id) ON DELETE CASCADE,
                   CONSTRAINT suppliers_company_document_id_unique UNIQUE (company_id, document_id)
                 );
                 CREATE INDEX IF NOT EXISTS idx_suppliers_company_id ON suppliers (company_id);
+
+                CREATE TABLE IF NOT EXISTS purchase_orders (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  company_id INTEGER NOT NULL,
+                  supplier_id INTEGER NOT NULL,
+                  status TEXT NOT NULL DEFAULT 'created',
+                  created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+                  updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+                  CONSTRAINT purchase_orders_company_id_id_unique UNIQUE (company_id, id),
+                  CONSTRAINT purchase_orders_supplier_fk FOREIGN KEY (company_id, supplier_id) REFERENCES suppliers (company_id, id)
+                );
+                CREATE INDEX IF NOT EXISTS purchase_orders_company_id_idx ON purchase_orders (company_id);
+                CREATE INDEX IF NOT EXISTS purchase_orders_supplier_id_idx ON purchase_orders (company_id, supplier_id);
 
                 CREATE TABLE IF NOT EXISTS inventory_items (
                   company_id INTEGER NOT NULL,

@@ -10,6 +10,14 @@ class CrossTenantReferenceError(ValidationError):
     pass
 
 
+class SupplierNotFoundError(ValidationError):
+    pass
+
+
+class InvalidSupplierError(ValidationError):
+    pass
+
+
 class BranchHasInventoryError(Exception):
     pass
 

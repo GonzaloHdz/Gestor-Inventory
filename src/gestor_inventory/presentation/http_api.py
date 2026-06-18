@@ -25,6 +25,7 @@ from gestor_inventory.application.list_rbac import (
 )
 from gestor_inventory.application.products import CreateProductRequest, create_product
 from gestor_inventory.application.create_supplier import CreateSupplierRequest, create_supplier
+from gestor_inventory.application.create_purchase_order import CreatePurchaseOrderRequest, create_purchase_order
 from gestor_inventory.application.list_companies import ListCompaniesRequest, list_companies
 from gestor_inventory.application.list_suppliers import ListSuppliersRequest, list_suppliers
 from gestor_inventory.application.manage_user_roles import (
@@ -43,10 +44,12 @@ from gestor_inventory.domain.errors import (
     BranchHasInventoryError,
     CompanyNameAlreadyExistsError,
     EmailAlreadyExistsError,
+    InvalidSupplierError,
     InvalidCredentialsError,
     NotFoundError,
     PasswordResetTokenExpiredError,
     PasswordResetTokenInvalidError,
+    SupplierNotFoundError,
     ValidationError,
 )
 from gestor_inventory.security.jwt import verify_jwt_hs256
@@ -283,6 +286,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/admin/suppliers":
             self._handle_create_supplier()
+            return
+        if self.path == "/api/admin/purchase-orders":
+            self._handle_create_purchase_order()
             return
         if self.path == "/api/auth/password-reset/request":
             self._handle_password_reset_request()
@@ -988,6 +994,61 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                     "status": s.status,
                     "created_at": s.created_at,
                     "updated_at": s.updated_at,
+                }
+            },
+        )
+
+    def _handle_create_purchase_order(self) -> None:
+        try:
+            payload = self._read_json()
+            authz = self._require_permissions({"compras:crear"})
+            if authz is None:
+                return
+            company_id = int(authz.get("company_id"))
+            supplier_id = int(payload["supplier_id"])
+            res = create_purchase_order(
+                self.repo,
+                CreatePurchaseOrderRequest(company_id=company_id, supplier_id=supplier_id),
+            )
+        except KeyError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except SupplierNotFoundError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "supplier_not_found"})
+            return
+        except InvalidSupplierError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_supplier"})
+            return
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except json.JSONDecodeError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        po = res.purchase_order
+        self._audit_data(
+            authz,
+            action="CREATE",
+            resource="compras",
+            details=json.dumps({"purchase_order_id": po.id, "supplier_id": po.supplier_id}, separators=(",", ":")),
+        )
+        self._send_json(
+            HTTPStatus.CREATED,
+            {
+                "purchase_order": {
+                    "company_id": po.company_id,
+                    "id": po.id,
+                    "supplier_id": po.supplier_id,
+                    "status": po.status,
+                    "created_at": po.created_at,
+                    "updated_at": po.updated_at,
                 }
             },
         )
