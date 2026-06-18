@@ -243,6 +243,7 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         self._send_json(
             HTTPStatus.CREATED,
             {
+                "branch_id": b.id,
                 "branch": {
                     "company_id": b.company_id,
                     "id": b.id,

@@ -224,6 +224,24 @@ class AuthorizationIntegrationTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertEqual(body.get("error"), "validation_error")
 
+    def test_create_branch_rejects_inactive_company(self):
+        conn = self.repo._persistent_conn
+        conn.execute("UPDATE companies SET status = 'inactive' WHERE id = 1")
+        conn.commit()
+
+        admin_company1 = self.users[(1, 12)]
+        token_admin = self._token_for(user_id=admin_company1.id, company_id=1, email=admin_company1.email)
+        status, body = self._post("/api/admin/branches", {"name": "Sucursal Inactiva"}, token=token_admin)
+        self.assertIn(status, (400, 404))
+        if status == 400:
+            self.assertEqual(body.get("error"), "validation_error")
+
+        row = conn.execute(
+            "SELECT 1 FROM branches WHERE company_id = 1 AND name = ? LIMIT 1",
+            ("Sucursal Inactiva",),
+        ).fetchone()
+        self.assertIsNone(row)
+
     def test_inventory_endpoint_requires_token_and_filters_by_company_and_branch(self):
         status_unauth, _ = self._get("/api/inventory?branch_id=1", token=None)
         self.assertEqual(status_unauth, 401)
