@@ -867,6 +867,27 @@ class SqliteUserRepository:
                 raise sqlite3.IntegrityError("supplier not found")
             return supplier
 
+    def deactivate_supplier(self, *, company_id: int, supplier_id: int) -> str:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT status FROM suppliers WHERE company_id = ? AND id = ? LIMIT 1",
+                (int(company_id), int(supplier_id)),
+            ).fetchone()
+            if row is None:
+                return "not_found"
+            status = str(row[0])
+            if status == "inactive":
+                return "already_inactive"
+            now = int(time.time())
+            cur = conn.execute(
+                "UPDATE suppliers SET status = 'inactive', updated_at = ? WHERE id = ? AND company_id = ?",
+                (int(now), int(supplier_id), int(company_id)),
+            )
+            if int(cur.rowcount) != 1:
+                return "not_found"
+            conn.commit()
+            return "changed"
+
     def count_suppliers(
         self,
         *,

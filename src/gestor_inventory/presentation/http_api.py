@@ -29,6 +29,7 @@ from gestor_inventory.application.create_purchase_order import CreatePurchaseOrd
 from gestor_inventory.application.list_companies import ListCompaniesRequest, list_companies
 from gestor_inventory.application.list_suppliers import ListSuppliersRequest, list_suppliers
 from gestor_inventory.application.update_supplier import UpdateSupplierRequest, update_supplier
+from gestor_inventory.application.deactivate_supplier import DeactivateSupplierRequest, deactivate_supplier
 from gestor_inventory.application.manage_user_roles import (
     AssignUserRoleRequest,
     RevokeUserRoleRequest,
@@ -320,6 +321,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         if self.path.startswith("/api/admin/branches/"):
             self._handle_deactivate_branch(self.path)
+            return
+        if self.path.startswith("/api/admin/suppliers/"):
+            self._handle_deactivate_supplier(self.path)
             return
         if self.path.startswith("/api/admin/"):
             self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": "Prohibido"})
@@ -674,6 +678,38 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             action="DELETE",
             resource="sucursales",
             details=json.dumps({"branch_id": int(branch_id), "changed": bool(res.changed)}, separators=(",", ":")),
+        )
+        self._send_json(HTTPStatus.OK, {"status": "ok", "changed": res.changed})
+
+    def _handle_deactivate_supplier(self, path: str) -> None:
+        try:
+            authz = self._require_permissions({"proveedores:eliminar"})
+            if authz is None:
+                return
+            company_id = int(authz.get("company_id"))
+            raw_id = path.removeprefix("/api/admin/suppliers/").strip("/")
+            supplier_id = int(raw_id)
+            res = deactivate_supplier(
+                self.repo, DeactivateSupplierRequest(company_id=company_id, supplier_id=supplier_id)
+            )
+        except NotFoundError:
+            self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            return
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._audit_data(
+            authz,
+            action="DELETE",
+            resource="proveedores",
+            details=json.dumps({"supplier_id": int(supplier_id), "changed": bool(res.changed)}, separators=(",", ":")),
         )
         self._send_json(HTTPStatus.OK, {"status": "ok", "changed": res.changed})
 

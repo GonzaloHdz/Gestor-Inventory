@@ -101,6 +101,19 @@ class SuppliersCrudIntegrationTests(unittest.TestCase):
         finally:
             conn.close()
 
+    def _delete(self, path: str, token: str | None) -> tuple[int, dict]:
+        conn = http.client.HTTPConnection(self.base[0], self.base[1], timeout=2)
+        try:
+            headers = {}
+            if token is not None:
+                headers["Authorization"] = f"Bearer {token}"
+            conn.request("DELETE", path, headers=headers)
+            resp = conn.getresponse()
+            raw = resp.read()
+            return resp.status, ({} if not raw else json.loads(raw.decode("utf-8")))
+        finally:
+            conn.close()
+
     def _data_audit_logs(self) -> list[dict]:
         conn = self.repo._persistent_conn
         rows = conn.execute(
@@ -254,6 +267,98 @@ class SuppliersCrudIntegrationTests(unittest.TestCase):
             token=token,
         )
         self.assertEqual(status, 403)
+
+    def test_deactivate_supplier_success_and_hidden_from_default_list(self):
+        supplier = self.repo.create_supplier(
+            company_id=1,
+            name="Proveedor Desactivar",
+            document_id="DOC-DEL",
+            contact_email=None,
+            phone=None,
+            status="active",
+            created_at=180,
+            updated_at=180,
+        )
+        token = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
+
+        status_del, body_del = self._delete(f"/api/admin/suppliers/{int(supplier.id)}", token=token)
+        self.assertEqual(status_del, 200)
+        self.assertEqual(body_del.get("status"), "ok")
+
+        row = self.repo._persistent_conn.execute(
+            "SELECT status FROM suppliers WHERE company_id = 1 AND id = ?",
+            (int(supplier.id),),
+        ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(str(row[0]), "inactive")
+
+        status_list, body_list = self._get("/api/admin/suppliers", token=token)
+        self.assertEqual(status_list, 200)
+        data = body_list.get("data")
+        self.assertIsInstance(data, list)
+        self.assertFalse(any(int(r.get("id")) == int(supplier.id) for r in data if isinstance(r.get("id"), int)))
+
+        status_inactive, body_inactive = self._get("/api/admin/suppliers?status=inactive", token=token)
+        self.assertEqual(status_inactive, 200)
+        data_inactive = body_inactive.get("data")
+        self.assertIsInstance(data_inactive, list)
+        self.assertTrue(any(int(r.get("id")) == int(supplier.id) for r in data_inactive if isinstance(r.get("id"), int)))
+
+    def test_deactivate_supplier_does_not_affect_historical_purchase_order(self):
+        supplier = self.repo.create_supplier(
+            company_id=1,
+            name="Proveedor Hist",
+            document_id="DOC-HIST",
+            contact_email=None,
+            phone=None,
+            status="active",
+            created_at=190,
+            updated_at=190,
+        )
+        token = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
+
+        status_po, body_po = self._post(
+            "/api/admin/purchase-orders",
+            {"supplier_id": int(supplier.id)},
+            token=token,
+        )
+        self.assertEqual(status_po, 201)
+        po = body_po.get("purchase_order")
+        self.assertIsInstance(po, dict)
+        po_id = int(po.get("id"))
+
+        status_del, _ = self._delete(f"/api/admin/suppliers/{int(supplier.id)}", token=token)
+        self.assertEqual(status_del, 200)
+
+        row_po = self.repo._persistent_conn.execute(
+            "SELECT company_id, supplier_id FROM purchase_orders WHERE company_id = 1 AND id = ?",
+            (int(po_id),),
+        ).fetchone()
+        self.assertIsNotNone(row_po)
+        self.assertEqual(int(row_po[0]), 1)
+        self.assertEqual(int(row_po[1]), int(supplier.id))
+
+    def test_deactivate_supplier_cross_tenant_returns_403_or_404(self):
+        supplier_b = self.repo.create_supplier(
+            company_id=2,
+            name="Proveedor B Delete",
+            document_id="DOC-B-DEL",
+            contact_email=None,
+            phone=None,
+            status="active",
+            created_at=200,
+            updated_at=200,
+        )
+        token = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
+        status, _ = self._delete(f"/api/admin/suppliers/{int(supplier_b.id)}", token=token)
+        self.assertIn(status, (403, 404))
+
+        row = self.repo._persistent_conn.execute(
+            "SELECT status FROM suppliers WHERE company_id = 2 AND id = ?",
+            (int(supplier_b.id),),
+        ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(str(row[0]), "active")
 
     def test_multi_tenant_isolation_create_and_list_never_leaks(self):
         token_a = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
