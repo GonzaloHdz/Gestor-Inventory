@@ -29,7 +29,7 @@ Empresas / Sucursales (planificado)
 
 - Crear empresa (POST /api/admin/companies): empresas:crear
 - Listar empresas (GET /api/admin/companies): empresas:leer
-- Editar empresa: empresa:editar
+- Editar empresa (PATCH /api/admin/companies/default-branch): empresas:editar
 - Crear sucursal (POST /api/admin/branches): sucursal:crear
 - Listar sucursales (GET /api/admin/branches): sucursales:leer
 - Editar sucursal: sucursal:editar

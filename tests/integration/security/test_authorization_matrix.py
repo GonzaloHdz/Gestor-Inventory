@@ -106,6 +106,20 @@ class AuthorizationIntegrationTests(unittest.TestCase):
         finally:
             conn.close()
 
+    def _patch(self, path: str, body: dict, token: str | None) -> tuple[int, dict]:
+        conn = http.client.HTTPConnection(self.base[0], self.base[1], timeout=2)
+        try:
+            headers = {"Content-Type": "application/json"}
+            if token is not None:
+                headers["Authorization"] = f"Bearer {token}"
+            raw = json.dumps(body).encode("utf-8")
+            conn.request("PATCH", path, body=raw, headers=headers)
+            resp = conn.getresponse()
+            data = resp.read()
+            return resp.status, ({} if not data else json.loads(data.decode("utf-8")))
+        finally:
+            conn.close()
+
     def _data_audit_logs(self) -> list[dict]:
         conn = self.repo._persistent_conn
         rows = conn.execute(
@@ -241,6 +255,73 @@ class AuthorizationIntegrationTests(unittest.TestCase):
             ("Sucursal Inactiva",),
         ).fetchone()
         self.assertIsNone(row)
+
+    def test_set_company_default_branch_requires_superadmin_permission(self):
+        branch_company1 = self.repo.create_branch(
+            company_id=1,
+            name="Sucursal Default",
+            address=None,
+            city=None,
+            country=None,
+            status="active",
+            is_active=True,
+        )
+
+        admin_company1 = self.users[(1, 12)]
+        token_admin = self._token_for(user_id=admin_company1.id, company_id=1, email=admin_company1.email)
+        status_forbidden, _ = self._patch(
+            "/api/admin/companies/default-branch",
+            {"default_branch_id": branch_company1.id},
+            token=token_admin,
+        )
+        self.assertEqual(status_forbidden, 403)
+
+        superadmin_company1 = self.users[(1, 13)]
+        token_super = self._token_for(user_id=superadmin_company1.id, company_id=1, email=superadmin_company1.email)
+        status_ok, body_ok = self._patch(
+            "/api/admin/companies/default-branch",
+            {"default_branch_id": branch_company1.id},
+            token=token_super,
+        )
+        self.assertEqual(status_ok, 200)
+        self.assertEqual(body_ok.get("default_branch_id"), branch_company1.id)
+
+        conn = self.repo._persistent_conn
+        row = conn.execute("SELECT default_branch_id FROM companies WHERE id = 1").fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(int(row[0]), branch_company1.id)
+
+        logs = self._data_audit_logs()
+        self.assertTrue(
+            any(
+                l["company_id"] == 1
+                and l["user_id"] == superadmin_company1.id
+                and l["action"] == "UPDATE"
+                and l["resource"] == "empresas"
+                for l in logs
+            )
+        )
+
+    def test_set_company_default_branch_rejects_cross_tenant(self):
+        branch_company2 = self.repo.create_branch(
+            company_id=2,
+            name="Sucursal B Default",
+            address=None,
+            city=None,
+            country=None,
+            status="active",
+            is_active=True,
+        )
+        superadmin_company1 = self.users[(1, 13)]
+        token_super = self._token_for(user_id=superadmin_company1.id, company_id=1, email=superadmin_company1.email)
+        status, body = self._patch(
+            "/api/admin/companies/default-branch",
+            {"default_branch_id": branch_company2.id},
+            token=token_super,
+        )
+        self.assertIn(status, (400, 403))
+        if status == 400:
+            self.assertEqual(body.get("error"), "validation_error")
 
     def test_inventory_endpoint_requires_token_and_filters_by_company_and_branch(self):
         status_unauth, _ = self._get("/api/inventory?branch_id=1", token=None)

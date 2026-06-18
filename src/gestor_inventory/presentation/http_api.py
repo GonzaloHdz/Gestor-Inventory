@@ -13,6 +13,7 @@ from gestor_inventory.application.categories import (
 )
 from gestor_inventory.application.branches import CreateBranchRequest, create_branch
 from gestor_inventory.application.create_company import CreateCompanyRequest, create_company
+from gestor_inventory.application.set_company_default_branch import SetCompanyDefaultBranchRequest, set_company_default_branch
 from gestor_inventory.application.deactivate_branch import DeactivateBranchRequest, deactivate_branch
 from gestor_inventory.application.inventory import ListInventoryRequest, list_inventory
 from gestor_inventory.application.list_branches import ListBranchesRequest, list_branches
@@ -226,6 +227,15 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             return
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
 
+    def do_PATCH(self):
+        if self.path == "/api/admin/companies/default-branch":
+            self._handle_set_company_default_branch()
+            return
+        if self.path.startswith("/api/admin/"):
+            self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": "Prohibido"})
+            return
+        self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+
     def _handle_create_company(self) -> None:
         try:
             payload = self._read_json()
@@ -271,6 +281,40 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             ),
         )
         self._send_json(HTTPStatus.CREATED, {"company_id": res.company.id})
+
+    def _handle_set_company_default_branch(self) -> None:
+        try:
+            authz = self._require_permissions({"empresas:editar"})
+            if authz is None:
+                return
+            payload = self._read_json()
+            company_id = int(authz.get("company_id"))
+            raw_id = payload.get("default_branch_id")
+            default_branch_id = int(raw_id) if raw_id is not None else None
+            set_company_default_branch(
+                self.repo,
+                SetCompanyDefaultBranchRequest(company_id=company_id, default_branch_id=default_branch_id),
+            )
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except json.JSONDecodeError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._audit_data(
+            authz,
+            action="UPDATE",
+            resource="empresas",
+            details=json.dumps({"default_branch_id": default_branch_id}, separators=(",", ":")),
+        )
+        self._send_json(HTTPStatus.OK, {"status": "ok", "default_branch_id": default_branch_id})
 
     def _handle_create_branch(self) -> None:
         try:

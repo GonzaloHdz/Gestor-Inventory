@@ -739,6 +739,7 @@ class SqliteUserRepository:
                 currency=str(currency),
                 timezone=str(timezone),
                 status="active",
+                default_branch_id=None,
                 created_at=int(created_at),
             )
 
@@ -751,7 +752,7 @@ class SqliteUserRepository:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT id, name, currency, timezone, status, created_at
+                SELECT id, name, currency, timezone, status, default_branch_id, created_at
                 FROM companies
                 WHERE status = 'active'
                 ORDER BY id
@@ -766,10 +767,21 @@ class SqliteUserRepository:
                     currency=str(currency),
                     timezone=str(timezone),
                     status=str(status),
+                    default_branch_id=int(default_branch_id) if default_branch_id is not None else None,
                     created_at=int(created_at),
                 )
-                for (company_id, name, currency, timezone, status, created_at) in rows
+                for (company_id, name, currency, timezone, status, default_branch_id, created_at) in rows
             ]
+
+    def update_company_default_branch(self, *, company_id: int, default_branch_id: int | None) -> None:
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE companies SET default_branch_id = ? WHERE id = ?",
+                (int(default_branch_id) if default_branch_id is not None else None, int(company_id)),
+            )
+            if int(cur.rowcount) != 1:
+                raise sqlite3.IntegrityError("company not found")
+            conn.commit()
 
     def upsert_inventory_item(
         self,
@@ -1022,6 +1034,7 @@ class SqliteUserRepository:
                 (700, "configuracion:modificar", "Modificar configuración"),
                 (800, "empresas:crear", "Crear empresas"),
                 (801, "empresas:leer", "Leer empresas"),
+                (802, "empresas:editar", "Editar empresas"),
                 (810, "sucursal:crear", "Crear sucursales"),
                 (811, "sucursales:leer", "Leer sucursales"),
                 (812, "sucursales:editar", "Editar sucursales"),
@@ -1054,7 +1067,7 @@ class SqliteUserRepository:
             INSERT OR IGNORE INTO role_permissions (company_id, role_id, permission_id)
             SELECT r.company_id, r.id, p.id
             FROM roles r
-            JOIN permissions p ON p.code NOT IN ('empresas:crear', 'empresas:leer')
+            JOIN permissions p ON p.code NOT IN ('empresas:crear', 'empresas:leer', 'empresas:editar')
             WHERE r.name = 'Administrador' AND r.company_id = ?
             """,
             (int(company_id),),
@@ -1080,8 +1093,10 @@ class SqliteUserRepository:
                   currency TEXT NOT NULL,
                   timezone TEXT NOT NULL,
                   status TEXT NOT NULL DEFAULT 'active',
+                  default_branch_id INTEGER NULL,
                   created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
-                  CONSTRAINT companies_name_unique UNIQUE (name)
+                  CONSTRAINT companies_name_unique UNIQUE (name),
+                  CONSTRAINT companies_default_branch_fk FOREIGN KEY (default_branch_id) REFERENCES branches (id)
                 );
                 CREATE INDEX IF NOT EXISTS companies_created_at_idx ON companies (created_at);
 
@@ -1312,6 +1327,7 @@ class SqliteUserRepository:
                   (700, 'configuracion:modificar', 'Modificar configuración'),
                   (800, 'empresas:crear', 'Crear empresas'),
                   (801, 'empresas:leer', 'Leer empresas'),
+                  (802, 'empresas:editar', 'Editar empresas'),
                   (810, 'sucursal:crear', 'Crear sucursales'),
                   (811, 'sucursales:leer', 'Leer sucursales'),
                   (812, 'sucursales:editar', 'Editar sucursales'),
@@ -1333,7 +1349,7 @@ class SqliteUserRepository:
                 INSERT OR IGNORE INTO role_permissions (company_id, role_id, permission_id)
                 SELECT r.company_id, r.id, p.id
                 FROM roles r
-                JOIN permissions p ON p.code NOT IN ('empresas:crear', 'empresas:leer')
+                JOIN permissions p ON p.code NOT IN ('empresas:crear', 'empresas:leer', 'empresas:editar')
                 WHERE r.name = 'Administrador' AND r.company_id IN (1, 2);
 
                 INSERT OR IGNORE INTO role_permissions (company_id, role_id, permission_id)
@@ -1346,6 +1362,8 @@ class SqliteUserRepository:
             cols = [row[1] for row in conn.execute("PRAGMA table_info(companies)").fetchall()]
             if "status" not in cols:
                 conn.execute("ALTER TABLE companies ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
+            if "default_branch_id" not in cols:
+                conn.execute("ALTER TABLE companies ADD COLUMN default_branch_id INTEGER NULL")
             branch_cols = [row[1] for row in conn.execute("PRAGMA table_info(branches)").fetchall()]
             if "address" not in branch_cols:
                 conn.execute("ALTER TABLE branches ADD COLUMN address TEXT NULL")
@@ -1357,10 +1375,10 @@ class SqliteUserRepository:
                 conn.execute("ALTER TABLE branches ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
             conn.execute(
                 """
-                INSERT OR IGNORE INTO companies (id, name, currency, timezone, status, created_at)
+                INSERT OR IGNORE INTO companies (id, name, currency, timezone, status, created_at, default_branch_id)
                 VALUES
-                  (1, 'Empresa 1', 'USD', 'UTC', 'active', strftime('%s','now')),
-                  (2, 'Empresa 2', 'USD', 'UTC', 'active', strftime('%s','now'))
+                  (1, 'Empresa 1', 'USD', 'UTC', 'active', strftime('%s','now'), NULL),
+                  (2, 'Empresa 2', 'USD', 'UTC', 'active', strftime('%s','now'), NULL)
                 """
             )
             conn.commit()

@@ -8,4 +8,5 @@ class Company:
     currency: str
     timezone: str
     status: str
+    default_branch_id: int | None
     created_at: int
