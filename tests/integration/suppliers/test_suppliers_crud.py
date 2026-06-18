@@ -87,6 +87,20 @@ class SuppliersCrudIntegrationTests(unittest.TestCase):
         finally:
             conn.close()
 
+    def _put(self, path: str, body: dict, token: str | None) -> tuple[int, dict]:
+        conn = http.client.HTTPConnection(self.base[0], self.base[1], timeout=2)
+        try:
+            headers = {"Content-Type": "application/json"}
+            if token is not None:
+                headers["Authorization"] = f"Bearer {token}"
+            raw = json.dumps(body).encode("utf-8")
+            conn.request("PUT", path, body=raw, headers=headers)
+            resp = conn.getresponse()
+            data = resp.read()
+            return resp.status, ({} if not data else json.loads(data.decode("utf-8")))
+        finally:
+            conn.close()
+
     def _data_audit_logs(self) -> list[dict]:
         conn = self.repo._persistent_conn
         rows = conn.execute(
@@ -142,6 +156,103 @@ class SuppliersCrudIntegrationTests(unittest.TestCase):
     def test_create_supplier_requires_permission(self):
         token = self._token_for(user_id=self.almacenista_a.id, company_id=1, email=self.almacenista_a.email)
         status, _ = self._post("/api/admin/suppliers", {"name": "Proveedor X"}, token=token)
+        self.assertEqual(status, 403)
+
+    def test_update_supplier_success_200_and_company_id_immutable(self):
+        supplier = self.repo.create_supplier(
+            company_id=1,
+            name="Proveedor Update",
+            document_id="DOC-UPD",
+            contact_email=None,
+            phone=None,
+            status="active",
+            created_at=150,
+            updated_at=150,
+        )
+        token = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
+        status, body = self._put(
+            f"/api/admin/suppliers/{int(supplier.id)}",
+            {"name": "Proveedor Update 2", "contact_email": "new@example.com", "phone": "999"},
+            token=token,
+        )
+        self.assertEqual(status, 200)
+        s = body.get("supplier")
+        self.assertIsInstance(s, dict)
+        self.assertEqual(s.get("company_id"), 1)
+        self.assertEqual(s.get("id"), int(supplier.id))
+        self.assertEqual(s.get("name"), "Proveedor Update 2")
+        self.assertEqual(s.get("contact_email"), "new@example.com")
+        self.assertEqual(s.get("phone"), "999")
+
+        row = self.repo._persistent_conn.execute(
+            "SELECT company_id, name, contact_email, phone FROM suppliers WHERE company_id = 1 AND id = ?",
+            (int(supplier.id),),
+        ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(int(row[0]), 1)
+        self.assertEqual(str(row[1]), "Proveedor Update 2")
+        self.assertEqual(str(row[2]), "new@example.com")
+        self.assertEqual(str(row[3]), "999")
+
+        status_bad, body_bad = self._put(
+            f"/api/admin/suppliers/{int(supplier.id)}",
+            {"company_id": 2, "name": "Hack"},
+            token=token,
+        )
+        self.assertEqual(status_bad, 400)
+        self.assertEqual(body_bad.get("error"), "validation_error")
+
+        row_after = self.repo._persistent_conn.execute(
+            "SELECT company_id, name FROM suppliers WHERE company_id = 1 AND id = ?",
+            (int(supplier.id),),
+        ).fetchone()
+        self.assertIsNotNone(row_after)
+        self.assertEqual(int(row_after[0]), 1)
+        self.assertEqual(str(row_after[1]), "Proveedor Update 2")
+
+    def test_update_supplier_cross_tenant_returns_403_or_404(self):
+        supplier_b = self.repo.create_supplier(
+            company_id=2,
+            name="Proveedor B Update",
+            document_id="DOC-B-UPD",
+            contact_email=None,
+            phone=None,
+            status="active",
+            created_at=160,
+            updated_at=160,
+        )
+        token = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
+        status, _ = self._put(
+            f"/api/admin/suppliers/{int(supplier_b.id)}",
+            {"name": "Nope"},
+            token=token,
+        )
+        self.assertIn(status, (403, 404))
+
+        row_b = self.repo._persistent_conn.execute(
+            "SELECT name FROM suppliers WHERE company_id = 2 AND id = ?",
+            (int(supplier_b.id),),
+        ).fetchone()
+        self.assertIsNotNone(row_b)
+        self.assertEqual(str(row_b[0]), "Proveedor B Update")
+
+    def test_update_supplier_requires_permission(self):
+        supplier = self.repo.create_supplier(
+            company_id=1,
+            name="Proveedor No Permiso",
+            document_id="DOC-NP",
+            contact_email=None,
+            phone=None,
+            status="active",
+            created_at=170,
+            updated_at=170,
+        )
+        token = self._token_for(user_id=self.almacenista_a.id, company_id=1, email=self.almacenista_a.email)
+        status, _ = self._put(
+            f"/api/admin/suppliers/{int(supplier.id)}",
+            {"name": "Hack"},
+            token=token,
+        )
         self.assertEqual(status, 403)
 
     def test_multi_tenant_isolation_create_and_list_never_leaks(self):

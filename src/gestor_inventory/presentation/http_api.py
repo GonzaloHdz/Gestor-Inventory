@@ -28,6 +28,7 @@ from gestor_inventory.application.create_supplier import CreateSupplierRequest, 
 from gestor_inventory.application.create_purchase_order import CreatePurchaseOrderRequest, create_purchase_order
 from gestor_inventory.application.list_companies import ListCompaniesRequest, list_companies
 from gestor_inventory.application.list_suppliers import ListSuppliersRequest, list_suppliers
+from gestor_inventory.application.update_supplier import UpdateSupplierRequest, update_supplier
 from gestor_inventory.application.manage_user_roles import (
     AssignUserRoleRequest,
     RevokeUserRoleRequest,
@@ -308,6 +309,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         if self.path.startswith("/api/admin/branches/"):
             self._handle_update_branch(self.path)
             return
+        if self.path.startswith("/api/admin/suppliers/"):
+            self._handle_update_supplier(self.path)
+            return
         if self.path.startswith("/api/admin/"):
             self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": "Prohibido"})
             return
@@ -574,6 +578,68 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                     "country": b.country,
                     "status": b.status,
                     "is_active": b.is_active,
+                }
+            },
+        )
+
+    def _handle_update_supplier(self, path: str) -> None:
+        try:
+            authz = self._require_permissions({"proveedores:editar"})
+            if authz is None:
+                return
+            company_id = int(authz.get("company_id"))
+            raw_id = path.removeprefix("/api/admin/suppliers/").strip("/")
+            supplier_id = int(raw_id)
+            payload = self._read_json()
+            if "company_id" in payload:
+                raise ValidationError("company_id es inmutable")
+            res = update_supplier(
+                self.repo,
+                UpdateSupplierRequest(
+                    company_id=company_id,
+                    supplier_id=supplier_id,
+                    name=payload.get("name"),
+                    contact_email=payload.get("contact_email"),
+                    phone=payload.get("phone"),
+                    status=payload.get("status"),
+                ),
+            )
+        except NotFoundError:
+            self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            return
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except json.JSONDecodeError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        s = res.supplier
+        self._audit_data(
+            authz,
+            action="UPDATE",
+            resource="proveedores",
+            details=json.dumps({"supplier_id": s.id}, separators=(",", ":")),
+        )
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "supplier": {
+                    "company_id": s.company_id,
+                    "id": s.id,
+                    "name": s.name,
+                    "document_id": s.document_id,
+                    "contact_email": s.contact_email,
+                    "phone": s.phone,
+                    "status": s.status,
+                    "created_at": s.created_at,
+                    "updated_at": s.updated_at,
                 }
             },
         )

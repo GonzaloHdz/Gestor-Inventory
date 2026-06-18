@@ -790,6 +790,83 @@ class SqliteUserRepository:
                 updated_at=int(updated_at),
             )
 
+    def get_supplier_by_id(self, *, company_id: int, supplier_id: int) -> Supplier | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT company_id, id, name, document_id, contact_email, phone, status, created_at, updated_at
+                FROM suppliers
+                WHERE company_id = ? AND id = ?
+                LIMIT 1
+                """,
+                (int(company_id), int(supplier_id)),
+            ).fetchone()
+            if row is None:
+                return None
+            (
+                company_id_v,
+                supplier_id_v,
+                name_v,
+                document_id_v,
+                contact_email,
+                phone,
+                status_v,
+                created_at,
+                updated_at,
+            ) = row
+            return Supplier(
+                company_id=int(company_id_v),
+                id=int(supplier_id_v),
+                name=str(name_v),
+                document_id=str(document_id_v) if document_id_v is not None else None,
+                contact_email=str(contact_email) if contact_email is not None else None,
+                phone=str(phone) if phone is not None else None,
+                status=str(status_v),
+                created_at=int(created_at),
+                updated_at=int(updated_at),
+            )
+
+    def update_supplier(
+        self,
+        *,
+        company_id: int,
+        supplier_id: int,
+        name: str | None,
+        contact_email: str | None,
+        phone: str | None,
+        status: str | None,
+    ) -> Supplier:
+        fields: list[str] = []
+        params: list[object] = []
+        if name is not None:
+            fields.append("name = ?")
+            params.append(str(name))
+        if contact_email is not None:
+            fields.append("contact_email = ?")
+            params.append(str(contact_email))
+        if phone is not None:
+            fields.append("phone = ?")
+            params.append(str(phone))
+        if status is not None:
+            fields.append("status = ?")
+            params.append(str(status))
+        now = int(time.time())
+        fields.append("updated_at = ?")
+        params.append(int(now))
+        params.append(int(supplier_id))
+        params.append(int(company_id))
+
+        with self._connect() as conn:
+            sql = f"UPDATE suppliers SET {', '.join(fields)} WHERE id = ? AND company_id = ?"
+            cur = conn.execute(sql, params)
+            if int(cur.rowcount) != 1:
+                raise sqlite3.IntegrityError("supplier not found")
+            conn.commit()
+            supplier = self.get_supplier_by_id(company_id=int(company_id), supplier_id=int(supplier_id))
+            if supplier is None:
+                raise sqlite3.IntegrityError("supplier not found")
+            return supplier
+
     def count_suppliers(
         self,
         *,
@@ -1237,6 +1314,7 @@ class SqliteUserRepository:
                 (401, "proveedores:leer", "Leer proveedores"),
                 (402, "proveedores:modificar", "Modificar proveedores"),
                 (403, "proveedores:eliminar", "Eliminar proveedores"),
+                (404, "proveedores:editar", "Editar proveedores"),
                 (500, "compras:crear", "Crear órdenes de compra"),
                 (501, "compras:leer", "Leer órdenes de compra"),
                 (502, "compras:aprobar", "Aprobar órdenes de compra"),
@@ -1573,6 +1651,7 @@ class SqliteUserRepository:
                   (401, 'proveedores:leer', 'Leer proveedores'),
                   (402, 'proveedores:modificar', 'Modificar proveedores'),
                   (403, 'proveedores:eliminar', 'Eliminar proveedores'),
+                  (404, 'proveedores:editar', 'Editar proveedores'),
                   (500, 'compras:crear', 'Crear órdenes de compra'),
                   (501, 'compras:leer', 'Leer órdenes de compra'),
                   (502, 'compras:aprobar', 'Aprobar órdenes de compra'),
