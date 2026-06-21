@@ -17,11 +17,18 @@ def main() -> None:
         jwt_expiration_minutes = 60
     if jwt_expiration_minutes <= 0:
         jwt_expiration_minutes = 60
+    try:
+        refresh_token_expiration_minutes = int(os.environ.get("JWT_REFRESH_EXPIRATION_MINUTES", "10080"))
+    except ValueError:
+        refresh_token_expiration_minutes = 10080
+    if refresh_token_expiration_minutes <= 0:
+        refresh_token_expiration_minutes = 10080
 
     repo = SqliteUserRepository(db_path=db_path)
     HttpApiHandler.repo = repo
     HttpApiHandler.jwt_secret = jwt_secret
     HttpApiHandler.jwt_expiration_minutes = jwt_expiration_minutes
+    HttpApiHandler.refresh_token_expiration_minutes = refresh_token_expiration_minutes
     server = ThreadingHTTPServer((host, port), HttpApiHandler)
     server.serve_forever()
 

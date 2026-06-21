@@ -109,6 +109,28 @@ class SqliteUserRepository:
                 "verified": bool(verified),
             }
 
+    def get_user_for_refresh(self, *, company_id: int, user_id: int) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, company_id, email, is_active, verified
+                FROM users
+                WHERE company_id = ? AND id = ?
+                LIMIT 1
+                """,
+                (int(company_id), int(user_id)),
+            ).fetchone()
+            if row is None:
+                return None
+            user_id_v, company_id_v, email_v, is_active, verified = row
+            return {
+                "id": int(user_id_v),
+                "company_id": int(company_id_v),
+                "email": str(email_v),
+                "is_active": bool(is_active),
+                "verified": bool(verified),
+            }
+
     def create_password_reset_token(
         self,
         *,
@@ -141,6 +163,25 @@ class SqliteUserRepository:
             conn.execute(
                 """
                 INSERT INTO email_verification_tokens (company_id, user_id, token_hash, expires_at, created_at, used_at)
+                VALUES (?, ?, ?, ?, ?, NULL)
+                """,
+                (company_id, user_id, str(token_hash), int(expires_at), int(created_at)),
+            )
+            conn.commit()
+
+    def create_refresh_token(
+        self,
+        *,
+        company_id: int,
+        user_id: int,
+        token_hash: str,
+        expires_at: int,
+        created_at: int,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO refresh_tokens (company_id, user_id, token_hash, expires_at, created_at, used_at)
                 VALUES (?, ?, ?, ?, ?, NULL)
                 """,
                 (company_id, user_id, str(token_hash), int(expires_at), int(created_at)),
@@ -197,6 +238,82 @@ class SqliteUserRepository:
                 (int(now), company_id, int(token_id)),
             )
             if cur_token.rowcount != 1:
+                conn.execute("ROLLBACK")
+                return "already_used", int(user_id)
+
+            conn.execute("COMMIT")
+            return "ok", int(user_id)
+
+    def consume_refresh_token(self, *, company_id: int, token_hash: str, now: int) -> tuple[str, int | None]:
+        with self._connect() as conn:
+            conn.execute("BEGIN")
+            row = conn.execute(
+                """
+                SELECT id, user_id, expires_at, used_at
+                FROM refresh_tokens
+                WHERE company_id = ? AND token_hash = ?
+                LIMIT 1
+                """,
+                (int(company_id), str(token_hash)),
+            ).fetchone()
+            if row is None:
+                conn.execute("ROLLBACK")
+                return "not_found", None
+            token_id, user_id, expires_at, used_at = row
+            if used_at is not None:
+                conn.execute("ROLLBACK")
+                return "already_used", int(user_id)
+            if int(now) > int(expires_at):
+                conn.execute("ROLLBACK")
+                return "expired", int(user_id)
+
+            cur = conn.execute(
+                """
+                UPDATE refresh_tokens
+                SET used_at = ?
+                WHERE company_id = ? AND id = ? AND used_at IS NULL
+                """,
+                (int(now), int(company_id), int(token_id)),
+            )
+            if cur.rowcount != 1:
+                conn.execute("ROLLBACK")
+                return "already_used", int(user_id)
+
+            conn.execute("COMMIT")
+            return "ok", int(user_id)
+
+    def invalidate_refresh_token(self, *, company_id: int, token_hash: str, now: int) -> tuple[str, int | None]:
+        with self._connect() as conn:
+            conn.execute("BEGIN")
+            row = conn.execute(
+                """
+                SELECT id, user_id, expires_at, used_at
+                FROM refresh_tokens
+                WHERE company_id = ? AND token_hash = ?
+                LIMIT 1
+                """,
+                (int(company_id), str(token_hash)),
+            ).fetchone()
+            if row is None:
+                conn.execute("ROLLBACK")
+                return "not_found", None
+            token_id, user_id, expires_at, used_at = row
+            if used_at is not None:
+                conn.execute("ROLLBACK")
+                return "already_used", int(user_id)
+            if int(now) > int(expires_at):
+                conn.execute("ROLLBACK")
+                return "expired", int(user_id)
+
+            cur = conn.execute(
+                """
+                UPDATE refresh_tokens
+                SET used_at = ?
+                WHERE company_id = ? AND id = ? AND used_at IS NULL
+                """,
+                (int(now), int(company_id), int(token_id)),
+            )
+            if cur.rowcount != 1:
                 conn.execute("ROLLBACK")
                 return "already_used", int(user_id)
 
@@ -1988,6 +2105,21 @@ class SqliteUserRepository:
                 CREATE INDEX IF NOT EXISTS evt_company_id_idx ON email_verification_tokens (company_id);
                 CREATE INDEX IF NOT EXISTS evt_user_id_idx ON email_verification_tokens (user_id);
                 CREATE INDEX IF NOT EXISTS evt_token_hash_idx ON email_verification_tokens (token_hash);
+
+                CREATE TABLE IF NOT EXISTS refresh_tokens (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  company_id INTEGER NOT NULL,
+                  user_id INTEGER NOT NULL,
+                  token_hash TEXT NOT NULL,
+                  expires_at INTEGER NOT NULL,
+                  created_at INTEGER NOT NULL,
+                  used_at INTEGER NULL,
+                  CONSTRAINT rt_company_token_unique UNIQUE (company_id, token_hash),
+                  CONSTRAINT rt_user_fk FOREIGN KEY (user_id) REFERENCES users (id)
+                );
+                CREATE INDEX IF NOT EXISTS rt_company_id_idx ON refresh_tokens (company_id);
+                CREATE INDEX IF NOT EXISTS rt_user_id_idx ON refresh_tokens (user_id);
+                CREATE INDEX IF NOT EXISTS rt_token_hash_idx ON refresh_tokens (token_hash);
 
                 CREATE TABLE IF NOT EXISTS auth_audit_logs (
                   id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -137,6 +137,7 @@ class HttpVerifyEmailTests(unittest.TestCase):
         )
         self.assertEqual(status_login_2, 200)
         self.assertIn("access_token", body_login_2)
+        self.assertIn("refresh_token", body_login_2)
 
 
 if __name__ == "__main__":

@@ -35,6 +35,8 @@ class LoginUserTests(unittest.TestCase):
         self.assertEqual(payload["company_id"], reg.company.id)
         self.assertEqual(payload["email"], "user@example.com")
         self.assertEqual(payload["sub"], str(reg.user.id))
+        self.assertIsInstance(res.refresh_token, str)
+        self.assertTrue(res.refresh_token)
 
     def test_login_invalid_password_is_generic_failure(self):
         reg = register_user(

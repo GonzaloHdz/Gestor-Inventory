@@ -5,6 +5,8 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 
 from gestor_inventory.application.login_user import LoginRequest, login_user
+from gestor_inventory.application.logout_user import LogoutRequest, logout_user
+from gestor_inventory.application.refresh_access_token import RefreshAccessTokenRequest, refresh_access_token
 from gestor_inventory.application.categories import (
     CreateCategoryRequest,
     GetCategoryRequest,
@@ -60,6 +62,7 @@ from gestor_inventory.domain.errors import (
     NotFoundError,
     PasswordResetTokenExpiredError,
     PasswordResetTokenInvalidError,
+    RefreshTokenInvalidError,
     ValidationError,
 )
 from gestor_inventory.security.jwt import verify_jwt_hs256
@@ -69,6 +72,7 @@ class HttpApiHandler(BaseHTTPRequestHandler):
     repo = None
     jwt_secret = None
     jwt_expiration_minutes = 60
+    refresh_token_expiration_minutes = 10080
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -404,6 +408,12 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/auth/login":
             self._handle_login()
+            return
+        if self.path == "/api/auth/refresh":
+            self._handle_refresh()
+            return
+        if self.path == "/api/auth/logout":
+            self._handle_logout()
             return
         if self.path == "/api/admin/user-roles/assign":
             self._handle_assign_user_role()
@@ -1068,6 +1078,7 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 req,
                 jwt_secret=self.jwt_secret,
                 access_token_ttl_seconds=int(self.jwt_expiration_minutes) * 60,
+                refresh_token_ttl_seconds=int(self.refresh_token_expiration_minutes) * 60,
             )
         except KeyError:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
@@ -1088,7 +1099,88 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
             return
 
-        self._send_json(HTTPStatus.OK, {"access_token": res.access_token, "token_type": "bearer"})
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "access_token": res.access_token,
+                "refresh_token": res.refresh_token,
+                "token_type": "bearer",
+            },
+        )
+
+    def _handle_logout(self) -> None:
+        try:
+            payload = self._read_json()
+            req = LogoutRequest(
+                company_id=payload["company_id"],
+                refresh_token=payload["refresh_token"],
+            )
+            logout_user(self.repo, req)
+        except KeyError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except RefreshTokenInvalidError:
+            self._send_json(
+                HTTPStatus.UNAUTHORIZED,
+                {"error": "invalid_refresh_token", "message": "Refresh token inválido o expirado"},
+            )
+            return
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except json.JSONDecodeError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._send_json(HTTPStatus.OK, {"status": "ok"})
+
+    def _handle_refresh(self) -> None:
+        try:
+            payload = self._read_json()
+            req = RefreshAccessTokenRequest(
+                company_id=payload["company_id"],
+                refresh_token=payload["refresh_token"],
+            )
+            if not isinstance(self.jwt_secret, str) or not self.jwt_secret:
+                self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+                return
+            res = refresh_access_token(
+                self.repo,
+                req,
+                jwt_secret=self.jwt_secret,
+                access_token_ttl_seconds=int(self.jwt_expiration_minutes) * 60,
+                refresh_token_ttl_seconds=int(self.refresh_token_expiration_minutes) * 60,
+            )
+        except KeyError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except RefreshTokenInvalidError:
+            self._send_json(
+                HTTPStatus.UNAUTHORIZED,
+                {"error": "invalid_refresh_token", "message": "Refresh token inválido o expirado"},
+            )
+            return
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except json.JSONDecodeError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "access_token": res.access_token,
+                "refresh_token": res.refresh_token,
+                "token_type": "bearer",
+            },
+        )
 
     def _handle_me(self) -> None:
         payload = self._require_auth_payload()
