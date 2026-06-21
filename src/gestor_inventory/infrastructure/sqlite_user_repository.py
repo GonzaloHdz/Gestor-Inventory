@@ -1676,6 +1676,7 @@ class SqliteUserRepository:
                 (302, "productos:modificar", "Modificar productos"),
                 (303, "productos:eliminar", "Eliminar productos"),
                 (304, "productos:editar", "Editar productos"),
+                (320, "categorias:leer", "Leer categorías"),
                 (400, "proveedores:crear", "Crear proveedores"),
                 (401, "proveedores:leer", "Leer proveedores"),
                 (402, "proveedores:modificar", "Modificar proveedores"),

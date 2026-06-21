@@ -23,6 +23,7 @@ from gestor_inventory.application.list_rbac import (
     list_permissions,
     list_roles,
 )
+from gestor_inventory.application.list_categories import ListCategoriesRequest, list_categories
 from gestor_inventory.application.list_products import ListProductsRequest, list_products
 from gestor_inventory.application.create_product import CreateProductRequest, create_product
 from gestor_inventory.application.create_supplier import CreateSupplierRequest, create_supplier
@@ -88,6 +89,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/admin/products":
             self._handle_list_products(parsed.query)
+            return
+        if parsed.path == "/api/admin/categories":
+            self._handle_list_categories(parsed.query)
             return
         if parsed.path == "/api/admin/settings":
             self._handle_get_company_settings()
@@ -298,6 +302,51 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                     for p in res.products
                 ],
                 "meta": {"total": res.total, "page": res.page, "per_page": res.per_page, "pages": res.pages},
+            },
+        )
+
+    def _handle_list_categories(self, query: str) -> None:
+        try:
+            authz = self._require_permissions({"categorias:leer"})
+            if authz is None:
+                return
+            company_id = int(authz.get("company_id"))
+            params = parse_qs(query, keep_blank_values=True)
+            status_raw = (params.get("status") or [None])[0]
+            status = "active" if status_raw is None else status_raw
+            if isinstance(status, str) and status.strip().lower() in ("", "all", "todas", "any"):
+                status = None
+            res = list_categories(self.repo, ListCategoriesRequest(company_id=company_id, status=status))
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._audit_data(
+            authz,
+            action="READ",
+            resource="categorias",
+            details=json.dumps({"returned": len(res.categories), "status": status}, separators=(",", ":")),
+        )
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "data": [
+                    {
+                        "company_id": c.company_id,
+                        "id": c.id,
+                        "name": c.name,
+                        "description": c.description,
+                        "status": c.status,
+                        "is_active": c.is_active,
+                    }
+                    for c in res.categories
+                ]
             },
         )
 
