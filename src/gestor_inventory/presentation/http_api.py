@@ -620,7 +620,10 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         except DuplicateSKUError:
             self._send_json(
                 HTTPStatus.BAD_REQUEST,
-                {"error": "duplicate_sku", "message": "El SKU ya existe en esta empresa"},
+                {
+                    "error": "duplicate_product_code",
+                    "message": "Ya existe un producto registrado con este SKU o código en tu empresa. Por favor, utiliza uno diferente.",
+                },
             )
             return
         except InvalidCategoryError:
@@ -1095,7 +1098,10 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         except DuplicateSKUError:
             self._send_json(
                 HTTPStatus.BAD_REQUEST,
-                {"error": "duplicate_sku", "message": "El SKU ya existe en esta empresa"},
+                {
+                    "error": "duplicate_product_code",
+                    "message": "Ya existe un producto registrado con este SKU o código en tu empresa. Por favor, utiliza uno diferente.",
+                },
             )
             return
         except InvalidCategoryError:

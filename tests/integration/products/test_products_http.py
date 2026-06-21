@@ -134,7 +134,11 @@ class ProductsHttpIntegrationTests(unittest.TestCase):
             token=token,
         )
         self.assertEqual(status, 400)
-        self.assertEqual(body.get("error"), "duplicate_sku")
+        self.assertEqual(body.get("error"), "duplicate_product_code")
+        self.assertEqual(
+            body.get("message"),
+            "Ya existe un producto registrado con este SKU o código en tu empresa. Por favor, utiliza uno diferente.",
+        )
 
     def test_post_product_cross_tenant_category_returns_400(self):
         token = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
@@ -224,7 +228,11 @@ class ProductsHttpIntegrationTests(unittest.TestCase):
             token=token,
         )
         self.assertEqual(status, 400)
-        self.assertEqual(body.get("error"), "duplicate_sku")
+        self.assertEqual(body.get("error"), "duplicate_product_code")
+        self.assertEqual(
+            body.get("message"),
+            "Ya existe un producto registrado con este SKU o código en tu empresa. Por favor, utiliza uno diferente.",
+        )
 
     def test_put_product_cross_tenant_product_returns_404_or_403(self):
         p_other = self.repo.create_product(
