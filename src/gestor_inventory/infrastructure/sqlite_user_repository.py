@@ -1,6 +1,7 @@
 import sqlite3
 from contextlib import contextmanager
 import time
+import unicodedata
 
 from gestor_inventory.domain.errors import EmailAlreadyExistsError
 from gestor_inventory.domain.company import Company
@@ -986,8 +987,14 @@ class SqliteUserRepository:
                 sql += " AND status = ?"
                 params.append(str(status))
             if search is not None:
-                like = f"%{str(search)}%"
-                sql += " AND (name LIKE ? OR sku LIKE ? OR barcode LIKE ?)"
+                search_v = self._normalize_search(str(search))
+                like = f"%{search_v}%"
+                name_norm = (
+                    "lower(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(name,"
+                    "'Á','A'),'á','a'),'À','A'),'à','a'),'É','E'),'é','e'),'Í','I'),'í','i'),'Ó','O'),'ó','o'),'Ú','U'),'ú','u'),"
+                    "'Ñ','N'),'ñ','n'))"
+                )
+                sql += f" AND ({name_norm} LIKE ? OR lower(sku) LIKE ? OR lower(barcode) LIKE ?)"
                 params.extend([like, like, like])
             row = conn.execute(sql, params).fetchone()
             return 0 if row is None else int(row[0])
@@ -1016,8 +1023,14 @@ class SqliteUserRepository:
                 sql += " AND status = ?"
                 params.append(str(status))
             if search is not None:
-                like = f"%{str(search)}%"
-                sql += " AND (name LIKE ? OR sku LIKE ? OR barcode LIKE ?)"
+                search_v = self._normalize_search(str(search))
+                like = f"%{search_v}%"
+                name_norm = (
+                    "lower(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(name,"
+                    "'Á','A'),'á','a'),'À','A'),'à','a'),'É','E'),'é','e'),'Í','I'),'í','i'),'Ó','O'),'ó','o'),'Ú','U'),'ú','u'),"
+                    "'Ñ','N'),'ñ','n'))"
+                )
+                sql += f" AND ({name_norm} LIKE ? OR lower(sku) LIKE ? OR lower(barcode) LIKE ?)"
                 params.extend([like, like, like])
             sql += " ORDER BY id LIMIT ? OFFSET ?"
             params.append(int(limit))
@@ -1056,6 +1069,11 @@ class SqliteUserRepository:
                     )
                 )
             return products
+
+    def _normalize_search(self, value: str) -> str:
+        v = unicodedata.normalize("NFKD", str(value))
+        v = "".join(ch for ch in v if not unicodedata.combining(ch))
+        return v.lower().strip()
 
     def company_is_active(self, *, company_id: int) -> bool:
         with self._connect() as conn:

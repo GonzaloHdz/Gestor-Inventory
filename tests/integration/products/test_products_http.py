@@ -566,6 +566,63 @@ class ProductsHttpIntegrationTests(unittest.TestCase):
         self.assertTrue(any(p.get("sku") == "SKU-SEARCH-1" for p in data_name))
         self.assertFalse(any(p.get("sku") == "SKU-SEARCH-2" for p in data_name))
 
+    def test_search_products_partial_name_match(self):
+        self.repo.create_product(
+            company_id=1,
+            category_id=int(self.category_a.id),
+            sku="SKU-CAFE-1",
+            barcode=None,
+            name="Café de grano",
+            description=None,
+            stock_minimum=0,
+            status="active",
+        )
+        token = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
+        status, body = self._get("/api/admin/products?search=cafe", token=token)
+        self.assertEqual(status, 200)
+        data = body.get("data")
+        self.assertIsInstance(data, list)
+        self.assertTrue(any(p.get("sku") == "SKU-CAFE-1" for p in data))
+
+    def test_search_products_partial_sku_match(self):
+        self.repo.create_product(
+            company_id=1,
+            category_id=int(self.category_a.id),
+            sku="PROD-123-X",
+            barcode=None,
+            name="Producto 123",
+            description=None,
+            stock_minimum=0,
+            status="active",
+        )
+        token = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
+        status, body = self._get("/api/admin/products?search=123", token=token)
+        self.assertEqual(status, 200)
+        data = body.get("data")
+        self.assertIsInstance(data, list)
+        self.assertTrue(any(p.get("sku") == "PROD-123-X" for p in data))
+
+    def test_search_products_never_leaks_cross_tenant(self):
+        self.repo.create_product(
+            company_id=2,
+            category_id=int(self.category_b.id),
+            sku="SKU-SECRET-B",
+            barcode=None,
+            name="Secreto B",
+            description=None,
+            stock_minimum=0,
+            status="active",
+        )
+        token = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
+        status, body = self._get("/api/admin/products?search=Secreto", token=token)
+        self.assertEqual(status, 200)
+        data = body.get("data")
+        self.assertIsInstance(data, list)
+        self.assertEqual(len(data), 0)
+        meta = body.get("meta")
+        self.assertIsInstance(meta, dict)
+        self.assertEqual(meta.get("total"), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
