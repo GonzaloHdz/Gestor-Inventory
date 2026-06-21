@@ -77,6 +77,20 @@ class ProductsHttpIntegrationTests(unittest.TestCase):
         finally:
             conn.close()
 
+    def _put(self, path: str, body: dict, token: str | None) -> tuple[int, dict]:
+        conn = http.client.HTTPConnection(self.base[0], self.base[1], timeout=2)
+        try:
+            headers = {"Content-Type": "application/json"}
+            if token is not None:
+                headers["Authorization"] = f"Bearer {token}"
+            raw = json.dumps(body).encode("utf-8")
+            conn.request("PUT", path, body=raw, headers=headers)
+            resp = conn.getresponse()
+            data = resp.read()
+            return resp.status, ({} if not data else json.loads(data.decode("utf-8")))
+        finally:
+            conn.close()
+
     def test_post_product_success_201(self):
         token = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
         status, body = self._post(
@@ -140,6 +154,95 @@ class ProductsHttpIntegrationTests(unittest.TestCase):
             token=token,
         )
         self.assertEqual(status, 403)
+
+    def test_put_product_update_name_and_stock_success_200(self):
+        p = self.repo.create_product(
+            company_id=1,
+            category_id=int(self.category_a.id),
+            sku="SKU-UP-1",
+            name="Antes",
+            description=None,
+            stock_minimum=1,
+            status="active",
+        )
+        token = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
+        status, body = self._put(
+            f"/api/admin/products/{int(p.id)}",
+            {"name": "Después", "stock_minimum": 5},
+            token=token,
+        )
+        self.assertEqual(status, 200)
+        updated = body.get("product")
+        self.assertIsInstance(updated, dict)
+        self.assertEqual(updated.get("id"), int(p.id))
+        self.assertEqual(updated.get("company_id"), 1)
+        self.assertEqual(updated.get("name"), "Después")
+        self.assertEqual(updated.get("stock_minimum"), 5)
+
+    def test_put_product_same_sku_success_200(self):
+        p = self.repo.create_product(
+            company_id=1,
+            category_id=int(self.category_a.id),
+            sku="SKU-UP-SAME",
+            name="P",
+            description=None,
+            stock_minimum=0,
+            status="active",
+        )
+        token = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
+        status, body = self._put(
+            f"/api/admin/products/{int(p.id)}",
+            {"sku": "SKU-UP-SAME"},
+            token=token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body.get("product", {}).get("sku"), "SKU-UP-SAME")
+
+    def test_put_product_duplicate_sku_returns_400(self):
+        p1 = self.repo.create_product(
+            company_id=1,
+            category_id=int(self.category_a.id),
+            sku="SKU-UP-DUP-1",
+            name="P1",
+            description=None,
+            stock_minimum=0,
+            status="active",
+        )
+        self.repo.create_product(
+            company_id=1,
+            category_id=int(self.category_a.id),
+            sku="SKU-UP-DUP-2",
+            name="P2",
+            description=None,
+            stock_minimum=0,
+            status="active",
+        )
+        token = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
+        status, body = self._put(
+            f"/api/admin/products/{int(p1.id)}",
+            {"sku": "SKU-UP-DUP-2"},
+            token=token,
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(body.get("error"), "duplicate_sku")
+
+    def test_put_product_cross_tenant_product_returns_404_or_403(self):
+        p_other = self.repo.create_product(
+            company_id=2,
+            category_id=int(self.category_b.id),
+            sku="SKU-UP-XT",
+            name="OTRO",
+            description=None,
+            stock_minimum=0,
+            status="active",
+        )
+        token = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
+        status, _ = self._put(
+            f"/api/admin/products/{int(p_other.id)}",
+            {"name": "X"},
+            token=token,
+        )
+        self.assertIn(status, (403, 404))
 
 
 if __name__ == "__main__":

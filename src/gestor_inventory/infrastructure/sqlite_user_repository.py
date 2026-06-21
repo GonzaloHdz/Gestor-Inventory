@@ -828,6 +828,95 @@ class SqliteUserRepository:
                 updated_at=int(updated_at) if updated_at is not None else 1,
             )
 
+    def get_product_by_id(self, *, company_id: int, product_id: int) -> Product | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT company_id, id, category_id, sku, name, description, stock_minimum, status, is_active, created_at, updated_at
+                FROM products
+                WHERE company_id = ? AND id = ?
+                LIMIT 1
+                """,
+                (int(company_id), int(product_id)),
+            ).fetchone()
+            if row is None:
+                return None
+            (
+                company_id_v,
+                product_id_v,
+                category_id,
+                sku_v,
+                name,
+                description,
+                stock_minimum,
+                status,
+                is_active,
+                created_at,
+                updated_at,
+            ) = row
+            status_v = str(status) if status is not None else ("active" if bool(is_active) else "inactive")
+            return Product(
+                company_id=int(company_id_v),
+                id=int(product_id_v),
+                category_id=int(category_id),
+                sku=str(sku_v),
+                name=str(name),
+                description=str(description) if description is not None else None,
+                stock_minimum=int(stock_minimum) if stock_minimum is not None else 0,
+                status=status_v,
+                is_active=bool(is_active),
+                created_at=int(created_at) if created_at is not None else 1,
+                updated_at=int(updated_at) if updated_at is not None else 1,
+            )
+
+    def update_product(
+        self,
+        *,
+        company_id: int,
+        product_id: int,
+        name: str | None,
+        sku: str | None,
+        category_id: int | None,
+        stock_minimum: int | None,
+        status: str | None,
+    ) -> Product:
+        fields: list[str] = []
+        params: list[object] = []
+        if name is not None:
+            fields.append("name = ?")
+            params.append(str(name))
+        if sku is not None:
+            fields.append("sku = ?")
+            params.append(str(sku))
+        if category_id is not None:
+            fields.append("category_id = ?")
+            params.append(int(category_id))
+        if stock_minimum is not None:
+            fields.append("stock_minimum = ?")
+            params.append(int(stock_minimum))
+        if status is not None:
+            fields.append("status = ?")
+            params.append(str(status))
+            fields.append("is_active = ?")
+            params.append(1 if str(status) == "active" else 0)
+
+        now = int(time.time())
+        fields.append("updated_at = ?")
+        params.append(int(now))
+        params.append(int(product_id))
+        params.append(int(company_id))
+
+        with self._connect() as conn:
+            sql = f"UPDATE products SET {', '.join(fields)} WHERE id = ? AND company_id = ?"
+            cur = conn.execute(sql, params)
+            if int(cur.rowcount) != 1:
+                raise sqlite3.IntegrityError("product not found")
+            conn.commit()
+            product = self.get_product_by_id(company_id=int(company_id), product_id=int(product_id))
+            if product is None:
+                raise sqlite3.IntegrityError("product not found")
+            return product
+
     def company_is_active(self, *, company_id: int) -> bool:
         with self._connect() as conn:
             row = conn.execute(
@@ -1446,6 +1535,7 @@ class SqliteUserRepository:
                 (301, "productos:leer", "Leer productos"),
                 (302, "productos:modificar", "Modificar productos"),
                 (303, "productos:eliminar", "Eliminar productos"),
+                (304, "productos:editar", "Editar productos"),
                 (400, "proveedores:crear", "Crear proveedores"),
                 (401, "proveedores:leer", "Leer proveedores"),
                 (402, "proveedores:modificar", "Modificar proveedores"),

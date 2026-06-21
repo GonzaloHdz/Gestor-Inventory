@@ -41,6 +41,7 @@ from gestor_inventory.application.register_user import RegisterUserRequest, regi
 from gestor_inventory.application.reset_password import ResetPasswordRequest, reset_password
 from gestor_inventory.application.update_branch import UpdateBranchRequest, update_branch
 from gestor_inventory.application.update_company_setting import UpdateCompanySettingsRequest, update_company_settings
+from gestor_inventory.application.update_product import UpdateProductRequest, update_product
 from gestor_inventory.application.verify_email import VerifyEmailRequest, verify_email
 from gestor_inventory.domain.errors import (
     BranchHasInventoryError,
@@ -310,6 +311,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             return
         if self.path.startswith("/api/admin/branches/"):
             self._handle_update_branch(self.path)
+            return
+        if self.path.startswith("/api/admin/products/"):
+            self._handle_update_product(self.path)
             return
         if self.path.startswith("/api/admin/suppliers/"):
             self._handle_update_supplier(self.path)
@@ -583,6 +587,83 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                     "country": b.country,
                     "status": b.status,
                     "is_active": b.is_active,
+                }
+            },
+        )
+
+    def _handle_update_product(self, path: str) -> None:
+        try:
+            authz = self._require_permissions({"productos:editar"})
+            if authz is None:
+                return
+            company_id = int(authz.get("company_id"))
+            raw_id = path.removeprefix("/api/admin/products/").strip("/")
+            product_id = int(raw_id)
+            payload = self._read_json()
+            if "company_id" in payload:
+                raise ValidationError("company_id es inmutable")
+            res = update_product(
+                self.repo,
+                UpdateProductRequest(
+                    company_id=company_id,
+                    product_id=product_id,
+                    name=payload.get("name"),
+                    sku=payload.get("sku"),
+                    category_id=payload.get("category_id"),
+                    stock_minimum=payload.get("stock_minimum"),
+                    status=payload.get("status"),
+                ),
+            )
+        except NotFoundError:
+            self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            return
+        except DuplicateSKUError:
+            self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                {"error": "duplicate_sku", "message": "El SKU ya existe en esta empresa"},
+            )
+            return
+        except InvalidCategoryError:
+            self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                {"error": "invalid_category", "message": "La categoría no pertenece a esta empresa"},
+            )
+            return
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except json.JSONDecodeError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        p = res.product
+        self._audit_data(
+            authz,
+            action="UPDATE",
+            resource="productos",
+            details=json.dumps({"product_id": p.id}, separators=(",", ":")),
+        )
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "product": {
+                    "company_id": p.company_id,
+                    "id": p.id,
+                    "category_id": p.category_id,
+                    "sku": p.sku,
+                    "name": p.name,
+                    "description": p.description,
+                    "stock_minimum": p.stock_minimum,
+                    "status": p.status,
+                    "is_active": p.is_active,
+                    "created_at": p.created_at,
+                    "updated_at": p.updated_at,
                 }
             },
         )
