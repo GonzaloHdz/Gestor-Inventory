@@ -235,7 +235,7 @@ class AuthorizationIntegrationTests(unittest.TestCase):
             token=token,
         )
         self.assertEqual(status, 400)
-        self.assertEqual(body.get("error"), "validation_error")
+        self.assertEqual(body.get("error"), "invalid_category")
 
     def test_create_branch_rejects_inactive_company(self):
         conn = self.repo._persistent_conn

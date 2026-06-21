@@ -3,7 +3,7 @@ import json
 import time
 from typing import Protocol
 
-from gestor_inventory.domain.errors import InvalidCredentialsError, ValidationError
+from gestor_inventory.domain.errors import AccountNotVerifiedError, InvalidCredentialsError, ValidationError
 from gestor_inventory.security.jwt import create_jwt_hs256
 from gestor_inventory.security.password_hash import verify_password
 
@@ -85,6 +85,17 @@ def login_user(
         raise InvalidCredentialsError()
 
     user_id = user.get("id")
+    if not bool(user.get("verified", False)):
+        repo.create_audit_log(
+            company_id=company_id,
+            branch_id=None,
+            user_id=int(user_id) if isinstance(user_id, int) else None,
+            event_type="auth.login_attempt",
+            created_at=now_v,
+            metadata_json=json.dumps({"success": False, "email": email, "reason": "not_verified"}, separators=(",", ":")),
+        )
+        raise AccountNotVerifiedError()
+
     token = create_jwt_hs256(
         {"sub": str(user_id), "company_id": company_id, "email": email},
         secret=jwt_secret,

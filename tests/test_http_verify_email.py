@@ -70,11 +70,20 @@ class HttpVerifyEmailTests(unittest.TestCase):
     def test_register_returns_verification_url_and_verifies_user(self):
         status, body = self._post_json(
             "/api/users/register",
-            {"company_id": 1, "email": "user@example.com", "password": "Secret1!", "role_id": 10},
+            {
+                "company_id": 999,
+                "role_id": 13,
+                "company_name": "Empresa Publica",
+                "email": "user@example.com",
+                "password": "Secret1!",
+            },
         )
         self.assertEqual(status, 201)
         self.assertIn("verification_url", body)
         self.assertFalse(body["verified"])
+        self.assertEqual(body["company_name"], "Empresa Publica")
+        self.assertEqual(body["role_id"], 12)
+        self.assertNotEqual(body["company_id"], 999)
 
         parsed = urlparse(body["verification_url"])
         verify_path = f"{parsed.path}?{parsed.query}"
@@ -82,18 +91,52 @@ class HttpVerifyEmailTests(unittest.TestCase):
         self.assertEqual(status2, 200)
         self.assertEqual(body2.get("status"), "ok")
 
-        user = self.repo.get_user_for_login(company_id=1, email="user@example.com")
+        user = self.repo.get_user_for_login(company_id=body["company_id"], email="user@example.com")
         self.assertIsNotNone(user)
         self.assertTrue(user["verified"])
 
     def test_register_rejects_weak_password_with_http_400_and_message(self):
         status, body = self._post_json(
             "/api/users/register",
-            {"company_id": 1, "email": "user2@example.com", "password": "weak", "role_id": 10},
+            {"company_name": "Empresa Debil", "email": "user2@example.com", "password": "weak"},
         )
         self.assertEqual(status, 400)
         self.assertEqual(body.get("error"), "validation_error")
         self.assertIn("Contraseña débil", body.get("message", ""))
+
+    def test_login_requires_verified_account_then_allows_after_verification(self):
+        status_reg, body_reg = self._post_json(
+            "/api/users/register",
+            {"company_name": "Empresa Login", "email": "login@example.com", "password": "Secret1!"},
+        )
+        self.assertEqual(status_reg, 201)
+
+        status_login_1, body_login_1 = self._post_json(
+            "/api/auth/login",
+            {
+                "company_id": body_reg["company_id"],
+                "email": "login@example.com",
+                "password": "Secret1!",
+            },
+        )
+        self.assertEqual(status_login_1, 403)
+        self.assertEqual(body_login_1.get("error"), "account_not_verified")
+
+        parsed = urlparse(body_reg["verification_url"])
+        verify_path = f"{parsed.path}?{parsed.query}"
+        status_verify, _ = self._get(verify_path)
+        self.assertEqual(status_verify, 200)
+
+        status_login_2, body_login_2 = self._post_json(
+            "/api/auth/login",
+            {
+                "company_id": body_reg["company_id"],
+                "email": "login@example.com",
+                "password": "Secret1!",
+            },
+        )
+        self.assertEqual(status_login_2, 200)
+        self.assertIn("access_token", body_login_2)
 
 
 if __name__ == "__main__":

@@ -46,6 +46,7 @@ from gestor_inventory.application.update_company_setting import UpdateCompanySet
 from gestor_inventory.application.update_product import UpdateProductRequest, update_product
 from gestor_inventory.application.verify_email import VerifyEmailRequest, verify_email
 from gestor_inventory.domain.errors import (
+    AccountNotVerifiedError,
     BranchHasInventoryError,
     CompanyNameAlreadyExistsError,
     DuplicateBarcodeError,
@@ -943,10 +944,11 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         try:
             payload = self._read_json()
             req = RegisterUserRequest(
-                company_id=payload["company_id"],
                 email=payload["email"],
                 password=payload["password"],
-                role_id=payload["role_id"],
+                company_name=payload.get("company_name"),
+                currency=payload.get("currency", "USD"),
+                timezone=payload.get("timezone", "UTC"),
             )
             host = self.headers.get("Host", "127.0.0.1")
             base_url = f"http://{host}"
@@ -956,6 +958,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             return
         except ValidationError as e:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except CompanyNameAlreadyExistsError:
+            self._send_json(HTTPStatus.CONFLICT, {"error": "company_name_exists"})
             return
         except EmailAlreadyExistsError:
             self._send_json(HTTPStatus.CONFLICT, {"error": "email_already_exists"})
@@ -971,7 +976,8 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             HTTPStatus.CREATED,
             {
                 "id": res.user.id,
-                "company_id": res.user.company_id,
+                "company_id": res.company.id,
+                "company_name": res.company.name,
                 "email": res.user.email,
                 "is_active": res.user.is_active,
                 "verified": res.user.verified,
@@ -999,6 +1005,12 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             )
         except KeyError:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except AccountNotVerifiedError:
+            self._send_json(
+                HTTPStatus.FORBIDDEN,
+                {"error": "account_not_verified", "message": "Debes verificar tu cuenta antes de iniciar sesión"},
+            )
             return
         except (ValidationError, InvalidCredentialsError):
             self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "invalid_credentials", "message": "Credenciales inválidas"})

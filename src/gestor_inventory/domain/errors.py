@@ -54,6 +54,10 @@ class InvalidCredentialsError(Exception):
     pass
 
 
+class AccountNotVerifiedError(Exception):
+    pass
+
+
 class PasswordResetTokenInvalidError(Exception):
     pass
 
