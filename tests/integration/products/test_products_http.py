@@ -623,6 +623,82 @@ class ProductsHttpIntegrationTests(unittest.TestCase):
         self.assertIsInstance(meta, dict)
         self.assertEqual(meta.get("total"), 0)
 
+    def test_list_products_combined_category_and_search(self):
+        category2 = self.repo.create_category(company_id=1, name="Cat A Combo", is_active=True)
+        self.repo.create_product(
+            company_id=1,
+            category_id=int(self.category_a.id),
+            sku="SKU-COMB-1",
+            barcode=None,
+            name="Azúcar Morena",
+            description=None,
+            stock_minimum=0,
+            status="active",
+        )
+        self.repo.create_product(
+            company_id=1,
+            category_id=int(category2.id),
+            sku="SKU-COMB-2",
+            barcode=None,
+            name="Café Molido",
+            description=None,
+            stock_minimum=0,
+            status="active",
+        )
+        self.repo.create_product(
+            company_id=1,
+            category_id=int(category2.id),
+            sku="SKU-COMB-3",
+            barcode=None,
+            name="Té Verde",
+            description=None,
+            stock_minimum=0,
+            status="active",
+        )
+        token = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
+
+        status, body = self._get(f"/api/admin/products?category_id={int(category2.id)}&search=cafe", token=token)
+        self.assertEqual(status, 200)
+        data = body.get("data")
+        self.assertIsInstance(data, list)
+        self.assertEqual(len(data), 1)
+        self.assertEqual(data[0].get("sku"), "SKU-COMB-2")
+
+        meta = body.get("meta")
+        self.assertIsInstance(meta, dict)
+        self.assertEqual(meta.get("total"), 1)
+
+    def test_list_products_with_cross_tenant_category_returns_empty(self):
+        self.repo.create_product(
+            company_id=1,
+            category_id=int(self.category_a.id),
+            sku="SKU-XT-CAT-A",
+            barcode=None,
+            name="Visible A",
+            description=None,
+            stock_minimum=0,
+            status="active",
+        )
+        self.repo.create_product(
+            company_id=2,
+            category_id=int(self.category_b.id),
+            sku="SKU-XT-CAT-B",
+            barcode=None,
+            name="Visible B",
+            description=None,
+            stock_minimum=0,
+            status="active",
+        )
+        token = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
+        status, body = self._get(f"/api/admin/products?category_id={int(self.category_b.id)}&status=all", token=token)
+        self.assertEqual(status, 200)
+        data = body.get("data")
+        self.assertIsInstance(data, list)
+        self.assertEqual(len(data), 0)
+        meta = body.get("meta")
+        self.assertIsInstance(meta, dict)
+        self.assertEqual(meta.get("total"), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
