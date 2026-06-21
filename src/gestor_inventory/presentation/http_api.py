@@ -23,7 +23,7 @@ from gestor_inventory.application.list_rbac import (
     list_permissions,
     list_roles,
 )
-from gestor_inventory.application.products import CreateProductRequest, create_product
+from gestor_inventory.application.create_product import CreateProductRequest, create_product
 from gestor_inventory.application.create_supplier import CreateSupplierRequest, create_supplier
 from gestor_inventory.application.create_purchase_order import CreatePurchaseOrderRequest, create_purchase_order
 from gestor_inventory.application.list_companies import ListCompaniesRequest, list_companies
@@ -45,13 +45,14 @@ from gestor_inventory.application.verify_email import VerifyEmailRequest, verify
 from gestor_inventory.domain.errors import (
     BranchHasInventoryError,
     CompanyNameAlreadyExistsError,
+    DuplicateSKUError,
     EmailAlreadyExistsError,
+    InvalidCategoryError,
     InvalidSupplierError,
     InvalidCredentialsError,
     NotFoundError,
     PasswordResetTokenExpiredError,
     PasswordResetTokenInvalidError,
-    SupplierNotFoundError,
     ValidationError,
 )
 from gestor_inventory.security.jwt import verify_jwt_hs256
@@ -1009,6 +1010,18 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             )
         except KeyError:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except DuplicateSKUError:
+            self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                {"error": "duplicate_sku", "message": "El SKU ya existe en esta empresa"},
+            )
+            return
+        except InvalidCategoryError:
+            self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                {"error": "invalid_category", "message": "La categoría no pertenece a esta empresa"},
+            )
             return
         except ValidationError as e:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})

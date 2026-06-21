@@ -18,6 +18,14 @@ class InvalidSupplierError(ValidationError):
     pass
 
 
+class DuplicateSKUError(ValidationError):
+    pass
+
+
+class InvalidCategoryError(ValidationError):
+    pass
+
+
 class BranchHasInventoryError(Exception):
     pass
 

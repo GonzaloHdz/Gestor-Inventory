@@ -1,7 +1,8 @@
 from dataclasses import dataclass
+import sqlite3
 from typing import Protocol
 
-from gestor_inventory.domain.errors import CrossTenantReferenceError, ValidationError
+from gestor_inventory.domain.errors import CrossTenantReferenceError, DuplicateSKUError, InvalidCategoryError, ValidationError
 from gestor_inventory.domain.operational import Product
 
 
@@ -54,20 +55,28 @@ def create_product(repo: ProductRepository, req: CreateProductRequest) -> Create
         raise CrossTenantReferenceError("empresa inválida")
 
     if repo.get_category_by_id(company_id=company_id, category_id=category_id) is None:
-        raise CrossTenantReferenceError("category_id no pertenece a la empresa")
+        raise InvalidCategoryError("category_id no pertenece a la empresa")
 
     if repo.get_product_by_sku(company_id=company_id, sku=sku) is not None:
-        raise ValidationError("sku ya existe")
+        raise DuplicateSKUError("sku ya existe")
 
-    product = repo.create_product(
-        company_id=company_id,
-        category_id=category_id,
-        sku=sku,
-        name=name,
-        description=description,
-        stock_minimum=stock_minimum,
-        status=status,
-    )
+    try:
+        product = repo.create_product(
+            company_id=company_id,
+            category_id=category_id,
+            sku=sku,
+            name=name,
+            description=description,
+            stock_minimum=stock_minimum,
+            status=status,
+        )
+    except sqlite3.IntegrityError as e:
+        msg = str(e).lower()
+        if "unique constraint failed" in msg and "products.company_id" in msg and "products.sku" in msg:
+            raise DuplicateSKUError("sku ya existe") from None
+        if "foreign key constraint failed" in msg:
+            raise InvalidCategoryError("category_id inválido") from None
+        raise
     return CreateProductResponse(product=product)
 
 
