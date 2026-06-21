@@ -47,6 +47,7 @@ from gestor_inventory.application.verify_email import VerifyEmailRequest, verify
 from gestor_inventory.domain.errors import (
     BranchHasInventoryError,
     CompanyNameAlreadyExistsError,
+    DuplicateBarcodeError,
     DuplicateSKUError,
     EmailAlreadyExistsError,
     InvalidCategoryError,
@@ -231,6 +232,7 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             params = parse_qs(query, keep_blank_values=True)
             category_id_raw = (params.get("category_id") or [None])[0]
             status_raw = (params.get("status") or [None])[0]
+            search_raw = (params.get("q") or params.get("search") or [None])[0]
             page_raw = (params.get("page") or ["1"])[0]
             per_page_raw = (params.get("per_page") or ["50"])[0]
             page = int(page_raw)
@@ -241,7 +243,14 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 status = None
             res = list_products(
                 self.repo,
-                ListProductsRequest(company_id=company_id, category_id=category_id, status=status, page=page, per_page=per_page),
+                ListProductsRequest(
+                    company_id=company_id,
+                    category_id=category_id,
+                    status=status,
+                    search=search_raw,
+                    page=page,
+                    per_page=per_page,
+                ),
             )
         except ValidationError as e:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
@@ -277,6 +286,7 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                         "id": p.id,
                         "category_id": p.category_id,
                         "sku": p.sku,
+                        "barcode": p.barcode,
                         "name": p.name,
                         "description": p.description,
                         "stock_minimum": p.stock_minimum,
@@ -682,7 +692,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                     product_id=product_id,
                     name=payload.get("name"),
                     sku=payload.get("sku"),
+                    barcode=payload.get("barcode"),
                     category_id=payload.get("category_id"),
+                    description=payload.get("description"),
                     stock_minimum=payload.get("stock_minimum"),
                     status=payload.get("status"),
                 ),
@@ -697,6 +709,12 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                     "error": "duplicate_product_code",
                     "message": "Ya existe un producto registrado con este SKU o código en tu empresa. Por favor, utiliza uno diferente.",
                 },
+            )
+            return
+        except DuplicateBarcodeError:
+            self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                {"error": "duplicate_barcode", "message": "Este código alterno ya está registrado."},
             )
             return
         except InvalidCategoryError:
@@ -733,6 +751,7 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                     "id": p.id,
                     "category_id": p.category_id,
                     "sku": p.sku,
+                    "barcode": p.barcode,
                     "name": p.name,
                     "description": p.description,
                     "stock_minimum": p.stock_minimum,
@@ -1160,6 +1179,7 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                     sku=payload["sku"],
                     name=payload["name"],
                     category_id=int(category_id_raw),
+                    barcode=payload.get("barcode"),
                     description=payload.get("description"),
                     stock_minimum=int(payload.get("stock_minimum", 0)),
                     status=str(payload.get("status", "active")),
@@ -1175,6 +1195,12 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                     "error": "duplicate_product_code",
                     "message": "Ya existe un producto registrado con este SKU o código en tu empresa. Por favor, utiliza uno diferente.",
                 },
+            )
+            return
+        except DuplicateBarcodeError:
+            self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                {"error": "duplicate_barcode", "message": "Este código alterno ya está registrado."},
             )
             return
         except InvalidCategoryError:
@@ -1211,6 +1237,7 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                     "id": p.id,
                     "category_id": p.category_id,
                     "sku": p.sku,
+                    "barcode": p.barcode,
                     "name": p.name,
                     "description": p.description,
                     "stock_minimum": p.stock_minimum,

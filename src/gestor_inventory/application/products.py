@@ -2,7 +2,13 @@ from dataclasses import dataclass
 import sqlite3
 from typing import Protocol
 
-from gestor_inventory.domain.errors import CrossTenantReferenceError, DuplicateSKUError, InvalidCategoryError, ValidationError
+from gestor_inventory.domain.errors import (
+    CrossTenantReferenceError,
+    DuplicateBarcodeError,
+    DuplicateSKUError,
+    InvalidCategoryError,
+    ValidationError,
+)
 from gestor_inventory.domain.operational import Product
 
 
@@ -17,6 +23,7 @@ class ProductRepository(Protocol):
         company_id: int,
         category_id: int,
         sku: str,
+        barcode: str | None,
         name: str,
         description: str | None,
         stock_minimum: int,
@@ -25,6 +32,8 @@ class ProductRepository(Protocol):
 
     def get_product_by_sku(self, *, company_id: int, sku: str) -> Product | None: ...
 
+    def get_product_by_barcode(self, *, company_id: int, barcode: str) -> Product | None: ...
+
 
 @dataclass(frozen=True)
 class CreateProductRequest:
@@ -32,6 +41,7 @@ class CreateProductRequest:
     sku: str
     name: str
     category_id: int
+    barcode: str | None = None
     description: str | None = None
     stock_minimum: int = 0
     status: str = "active"
@@ -45,8 +55,9 @@ class CreateProductResponse:
 def create_product(repo: ProductRepository, req: CreateProductRequest) -> CreateProductResponse:
     company_id = _validate_company_id(req.company_id)
     sku = _validate_sku(req.sku)
+    barcode = _normalize_optional(req.barcode, field="barcode")
     name = _validate_name(req.name)
-    description = _normalize_optional(req.description)
+    description = _normalize_optional(req.description, field="description")
     category_id = _validate_category_id(req.category_id)
     stock_minimum = _validate_stock_minimum(req.stock_minimum)
     status = _validate_status(req.status)
@@ -60,11 +71,15 @@ def create_product(repo: ProductRepository, req: CreateProductRequest) -> Create
     if repo.get_product_by_sku(company_id=company_id, sku=sku) is not None:
         raise DuplicateSKUError("sku ya existe")
 
+    if barcode is not None and repo.get_product_by_barcode(company_id=company_id, barcode=barcode) is not None:
+        raise DuplicateBarcodeError("barcode ya existe")
+
     try:
         product = repo.create_product(
             company_id=company_id,
             category_id=category_id,
             sku=sku,
+            barcode=barcode,
             name=name,
             description=description,
             stock_minimum=stock_minimum,
@@ -74,6 +89,8 @@ def create_product(repo: ProductRepository, req: CreateProductRequest) -> Create
         msg = str(e).lower()
         if "unique constraint failed" in msg and "products.company_id" in msg and "products.sku" in msg:
             raise DuplicateSKUError("sku ya existe") from None
+        if "unique constraint failed" in msg and "products.company_id" in msg and "products.barcode" in msg:
+            raise DuplicateBarcodeError("barcode ya existe") from None
         if "foreign key constraint failed" in msg:
             raise InvalidCategoryError("category_id inválido") from None
         raise
@@ -104,11 +121,11 @@ def _validate_name(name: str) -> str:
     return v
 
 
-def _normalize_optional(value: str | None) -> str | None:
+def _normalize_optional(value: str | None, *, field: str) -> str | None:
     if value is None:
         return None
     if not isinstance(value, str):
-        raise ValidationError("description inválido")
+        raise ValidationError(f"{field} inválido")
     v = value.strip()
     return v or None
 

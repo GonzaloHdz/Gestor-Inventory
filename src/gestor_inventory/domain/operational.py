@@ -51,6 +51,7 @@ class Product:
     id: int
     category_id: int
     sku: str
+    barcode: str | None
     name: str
     description: str | None
     stock_minimum: int
@@ -66,6 +67,8 @@ class Product:
             raise ValueError("category_id inválido")
         if not isinstance(self.sku, str) or not self.sku.strip():
             raise ValueError("sku inválido")
+        if self.barcode is not None and (not isinstance(self.barcode, str) or not self.barcode.strip()):
+            raise ValueError("barcode inválido")
         if not isinstance(self.name, str) or not self.name.strip():
             raise ValueError("name inválido")
         if self.description is not None and (not isinstance(self.description, str) or not self.description.strip()):

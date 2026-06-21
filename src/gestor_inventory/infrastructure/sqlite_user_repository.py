@@ -735,6 +735,7 @@ class SqliteUserRepository:
         company_id: int,
         category_id: int,
         sku: str,
+        barcode: str | None = None,
         name: str,
         description: str | None,
         stock_minimum: int = 0,
@@ -754,14 +755,15 @@ class SqliteUserRepository:
             cur = conn.execute(
                 """
                 INSERT INTO products (
-                  company_id, category_id, sku, name, description, stock_minimum, status, is_active, created_at, updated_at
+                  company_id, category_id, sku, barcode, name, description, stock_minimum, status, is_active, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     int(company_id),
                     int(category_id),
                     str(sku),
+                    str(barcode) if barcode is not None else None,
                     str(name),
                     str(description) if description is not None else None,
                     int(stock_minimum),
@@ -778,6 +780,7 @@ class SqliteUserRepository:
                 id=product_id,
                 category_id=int(category_id),
                 sku=str(sku),
+                barcode=str(barcode) if barcode is not None else None,
                 name=str(name),
                 description=description,
                 stock_minimum=int(stock_minimum),
@@ -791,7 +794,7 @@ class SqliteUserRepository:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT company_id, id, category_id, sku, name, description, stock_minimum, status, is_active, created_at, updated_at
+                SELECT company_id, id, category_id, sku, barcode, name, description, stock_minimum, status, is_active, created_at, updated_at
                 FROM products
                 WHERE company_id = ? AND sku = ?
                 LIMIT 1
@@ -805,6 +808,7 @@ class SqliteUserRepository:
                 product_id,
                 category_id,
                 sku_v,
+                barcode,
                 name,
                 description,
                 stock_minimum,
@@ -819,6 +823,7 @@ class SqliteUserRepository:
                 id=int(product_id),
                 category_id=int(category_id),
                 sku=str(sku_v),
+                barcode=str(barcode) if barcode is not None else None,
                 name=str(name),
                 description=str(description) if description is not None else None,
                 stock_minimum=int(stock_minimum) if stock_minimum is not None else 0,
@@ -832,7 +837,7 @@ class SqliteUserRepository:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT company_id, id, category_id, sku, name, description, stock_minimum, status, is_active, created_at, updated_at
+                SELECT company_id, id, category_id, sku, barcode, name, description, stock_minimum, status, is_active, created_at, updated_at
                 FROM products
                 WHERE company_id = ? AND id = ?
                 LIMIT 1
@@ -846,6 +851,7 @@ class SqliteUserRepository:
                 product_id_v,
                 category_id,
                 sku_v,
+                barcode,
                 name,
                 description,
                 stock_minimum,
@@ -860,6 +866,50 @@ class SqliteUserRepository:
                 id=int(product_id_v),
                 category_id=int(category_id),
                 sku=str(sku_v),
+                barcode=str(barcode) if barcode is not None else None,
+                name=str(name),
+                description=str(description) if description is not None else None,
+                stock_minimum=int(stock_minimum) if stock_minimum is not None else 0,
+                status=status_v,
+                is_active=bool(is_active),
+                created_at=int(created_at) if created_at is not None else 1,
+                updated_at=int(updated_at) if updated_at is not None else 1,
+            )
+
+    def get_product_by_barcode(self, *, company_id: int, barcode: str) -> Product | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT company_id, id, category_id, sku, barcode, name, description, stock_minimum, status, is_active, created_at, updated_at
+                FROM products
+                WHERE company_id = ? AND barcode = ?
+                LIMIT 1
+                """,
+                (int(company_id), str(barcode)),
+            ).fetchone()
+            if row is None:
+                return None
+            (
+                company_id_v,
+                product_id,
+                category_id,
+                sku_v,
+                barcode_v,
+                name,
+                description,
+                stock_minimum,
+                status,
+                is_active,
+                created_at,
+                updated_at,
+            ) = row
+            status_v = str(status) if status is not None else ("active" if bool(is_active) else "inactive")
+            return Product(
+                company_id=int(company_id_v),
+                id=int(product_id),
+                category_id=int(category_id),
+                sku=str(sku_v),
+                barcode=str(barcode_v) if barcode_v is not None else None,
                 name=str(name),
                 description=str(description) if description is not None else None,
                 stock_minimum=int(stock_minimum) if stock_minimum is not None else 0,
@@ -876,7 +926,9 @@ class SqliteUserRepository:
         product_id: int,
         name: str | None,
         sku: str | None,
+        barcode: str | None,
         category_id: int | None,
+        description: str | None,
         stock_minimum: int | None,
         status: str | None,
     ) -> Product:
@@ -888,9 +940,15 @@ class SqliteUserRepository:
         if sku is not None:
             fields.append("sku = ?")
             params.append(str(sku))
+        if barcode is not None:
+            fields.append("barcode = ?")
+            params.append(str(barcode))
         if category_id is not None:
             fields.append("category_id = ?")
             params.append(int(category_id))
+        if description is not None:
+            fields.append("description = ?")
+            params.append(str(description))
         if stock_minimum is not None:
             fields.append("stock_minimum = ?")
             params.append(int(stock_minimum))
@@ -917,7 +975,7 @@ class SqliteUserRepository:
                 raise sqlite3.IntegrityError("product not found")
             return product
 
-    def count_products(self, *, company_id: int, category_id: int | None, status: str | None) -> int:
+    def count_products(self, *, company_id: int, category_id: int | None, status: str | None, search: str | None) -> int:
         with self._connect() as conn:
             sql = "SELECT COUNT(1) FROM products WHERE company_id = ?"
             params: list[object] = [int(company_id)]
@@ -927,6 +985,10 @@ class SqliteUserRepository:
             if status is not None:
                 sql += " AND status = ?"
                 params.append(str(status))
+            if search is not None:
+                like = f"%{str(search)}%"
+                sql += " AND (name LIKE ? OR sku LIKE ? OR barcode LIKE ?)"
+                params.extend([like, like, like])
             row = conn.execute(sql, params).fetchone()
             return 0 if row is None else int(row[0])
 
@@ -936,12 +998,13 @@ class SqliteUserRepository:
         company_id: int,
         category_id: int | None,
         status: str | None,
+        search: str | None,
         limit: int,
         offset: int,
     ) -> list[Product]:
         with self._connect() as conn:
             sql = """
-            SELECT company_id, id, category_id, sku, name, description, stock_minimum, status, is_active, created_at, updated_at
+            SELECT company_id, id, category_id, sku, barcode, name, description, stock_minimum, status, is_active, created_at, updated_at
             FROM products
             WHERE company_id = ?
             """
@@ -952,6 +1015,10 @@ class SqliteUserRepository:
             if status is not None:
                 sql += " AND status = ?"
                 params.append(str(status))
+            if search is not None:
+                like = f"%{str(search)}%"
+                sql += " AND (name LIKE ? OR sku LIKE ? OR barcode LIKE ?)"
+                params.extend([like, like, like])
             sql += " ORDER BY id LIMIT ? OFFSET ?"
             params.append(int(limit))
             params.append(int(offset))
@@ -962,6 +1029,7 @@ class SqliteUserRepository:
                 product_id_v,
                 category_id_v,
                 sku_v,
+                barcode_v,
                 name_v,
                 description,
                 stock_minimum,
@@ -977,6 +1045,7 @@ class SqliteUserRepository:
                         id=int(product_id_v),
                         category_id=int(category_id_v),
                         sku=str(sku_v),
+                        barcode=str(barcode_v) if barcode_v is not None else None,
                         name=str(name_v),
                         description=str(description) if description is not None else None,
                         stock_minimum=int(stock_minimum) if stock_minimum is not None else 0,
@@ -1746,6 +1815,7 @@ class SqliteUserRepository:
                   company_id INTEGER NOT NULL,
                   category_id INTEGER NOT NULL,
                   sku TEXT NOT NULL,
+                  barcode TEXT NULL,
                   name TEXT NOT NULL,
                   description TEXT NULL,
                   stock_minimum INTEGER NOT NULL DEFAULT 0,
@@ -1760,6 +1830,7 @@ class SqliteUserRepository:
                 CREATE INDEX IF NOT EXISTS products_company_id_idx ON products (company_id);
                 CREATE INDEX IF NOT EXISTS products_company_category_id_idx ON products (company_id, category_id);
                 CREATE INDEX IF NOT EXISTS products_company_sku_idx ON products (company_id, sku);
+                CREATE UNIQUE INDEX IF NOT EXISTS products_company_barcode_unique ON products (company_id, barcode) WHERE barcode IS NOT NULL;
 
                 CREATE TABLE IF NOT EXISTS suppliers (
                   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2027,6 +2098,11 @@ class SqliteUserRepository:
                 conn.execute("ALTER TABLE products ADD COLUMN created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))")
             if "updated_at" not in product_cols:
                 conn.execute("ALTER TABLE products ADD COLUMN updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))")
+            if "barcode" not in product_cols:
+                conn.execute("ALTER TABLE products ADD COLUMN barcode TEXT NULL")
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS products_company_barcode_unique ON products (company_id, barcode) WHERE barcode IS NOT NULL"
+            )
             conn.execute(
                 """
                 INSERT OR IGNORE INTO companies (id, name, currency, timezone, status, created_at, default_branch_id)

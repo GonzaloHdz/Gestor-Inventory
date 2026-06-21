@@ -134,6 +134,33 @@ class ProductsHttpIntegrationTests(unittest.TestCase):
         ).fetchone()
         self.assertIsNotNone(row)
 
+    def test_post_product_saves_barcode_and_description_201(self):
+        token = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
+        status, body = self._post(
+            "/api/admin/products",
+            {
+                "sku": "SKU-HTTP-BC-1",
+                "barcode": "BAR-123",
+                "name": "Producto con Barcode",
+                "description": "Descripción larga",
+                "category_id": int(self.category_a.id),
+            },
+            token=token,
+        )
+        self.assertEqual(status, 201)
+        p = body.get("product")
+        self.assertIsInstance(p, dict)
+        self.assertEqual(p.get("barcode"), "BAR-123")
+        self.assertEqual(p.get("description"), "Descripción larga")
+
+        row = self.repo._persistent_conn.execute(
+            "SELECT barcode, description FROM products WHERE company_id = 1 AND sku = ? LIMIT 1",
+            ("SKU-HTTP-BC-1",),
+        ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row[0], "BAR-123")
+        self.assertEqual(row[1], "Descripción larga")
+
     def test_post_product_duplicate_sku_returns_400(self):
         token = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
         self._post(
@@ -152,6 +179,31 @@ class ProductsHttpIntegrationTests(unittest.TestCase):
             body.get("message"),
             "Ya existe un producto registrado con este SKU o código en tu empresa. Por favor, utiliza uno diferente.",
         )
+
+    def test_post_product_duplicate_barcode_returns_400(self):
+        token = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
+        self._post(
+            "/api/admin/products",
+            {
+                "sku": "SKU-BC-DUP-1",
+                "barcode": "BAR-DUP",
+                "name": "P1",
+                "category_id": int(self.category_a.id),
+            },
+            token=token,
+        )
+        status, body = self._post(
+            "/api/admin/products",
+            {
+                "sku": "SKU-BC-DUP-2",
+                "barcode": "BAR-DUP",
+                "name": "P2",
+                "category_id": int(self.category_a.id),
+            },
+            token=token,
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(body.get("error"), "duplicate_barcode")
 
     def test_post_product_cross_tenant_category_returns_400(self):
         token = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
@@ -177,6 +229,7 @@ class ProductsHttpIntegrationTests(unittest.TestCase):
             company_id=1,
             category_id=int(self.category_a.id),
             sku="SKU-UP-1",
+            barcode=None,
             name="Antes",
             description=None,
             stock_minimum=1,
@@ -201,6 +254,7 @@ class ProductsHttpIntegrationTests(unittest.TestCase):
             company_id=1,
             category_id=int(self.category_a.id),
             sku="SKU-UP-SAME",
+            barcode=None,
             name="P",
             description=None,
             stock_minimum=0,
@@ -220,6 +274,7 @@ class ProductsHttpIntegrationTests(unittest.TestCase):
             company_id=1,
             category_id=int(self.category_a.id),
             sku="SKU-UP-DUP-1",
+            barcode=None,
             name="P1",
             description=None,
             stock_minimum=0,
@@ -229,6 +284,7 @@ class ProductsHttpIntegrationTests(unittest.TestCase):
             company_id=1,
             category_id=int(self.category_a.id),
             sku="SKU-UP-DUP-2",
+            barcode=None,
             name="P2",
             description=None,
             stock_minimum=0,
@@ -247,11 +303,65 @@ class ProductsHttpIntegrationTests(unittest.TestCase):
             "Ya existe un producto registrado con este SKU o código en tu empresa. Por favor, utiliza uno diferente.",
         )
 
+    def test_put_product_update_barcode_and_description_success_200(self):
+        p = self.repo.create_product(
+            company_id=1,
+            category_id=int(self.category_a.id),
+            sku="SKU-UP-BC-1",
+            barcode=None,
+            name="P",
+            description=None,
+            stock_minimum=0,
+            status="active",
+        )
+        token = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
+        status, body = self._put(
+            f"/api/admin/products/{int(p.id)}",
+            {"barcode": "BAR-UP-1", "description": "Desc upd"},
+            token=token,
+        )
+        self.assertEqual(status, 200)
+        updated = body.get("product")
+        self.assertIsInstance(updated, dict)
+        self.assertEqual(updated.get("barcode"), "BAR-UP-1")
+        self.assertEqual(updated.get("description"), "Desc upd")
+
+    def test_put_product_duplicate_barcode_returns_400(self):
+        p1 = self.repo.create_product(
+            company_id=1,
+            category_id=int(self.category_a.id),
+            sku="SKU-UP-BC-DUP-1",
+            barcode="BAR-UP-DUP-1",
+            name="P1",
+            description=None,
+            stock_minimum=0,
+            status="active",
+        )
+        self.repo.create_product(
+            company_id=1,
+            category_id=int(self.category_a.id),
+            sku="SKU-UP-BC-DUP-2",
+            barcode="BAR-UP-DUP-2",
+            name="P2",
+            description=None,
+            stock_minimum=0,
+            status="active",
+        )
+        token = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
+        status, body = self._put(
+            f"/api/admin/products/{int(p1.id)}",
+            {"barcode": "BAR-UP-DUP-2"},
+            token=token,
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(body.get("error"), "duplicate_barcode")
+
     def test_put_product_cross_tenant_product_returns_404_or_403(self):
         p_other = self.repo.create_product(
             company_id=2,
             category_id=int(self.category_b.id),
             sku="SKU-UP-XT",
+            barcode=None,
             name="OTRO",
             description=None,
             stock_minimum=0,
@@ -270,6 +380,7 @@ class ProductsHttpIntegrationTests(unittest.TestCase):
             company_id=1,
             category_id=int(self.category_a.id),
             sku="SKU-L1",
+            barcode=None,
             name="L1",
             description=None,
             stock_minimum=0,
@@ -279,6 +390,7 @@ class ProductsHttpIntegrationTests(unittest.TestCase):
             company_id=1,
             category_id=int(self.category_a.id),
             sku="SKU-L2",
+            barcode=None,
             name="L2",
             description=None,
             stock_minimum=0,
@@ -288,6 +400,7 @@ class ProductsHttpIntegrationTests(unittest.TestCase):
             company_id=1,
             category_id=int(self.category_a.id),
             sku="SKU-L3",
+            barcode=None,
             name="L3",
             description=None,
             stock_minimum=0,
@@ -319,6 +432,7 @@ class ProductsHttpIntegrationTests(unittest.TestCase):
             company_id=1,
             category_id=int(self.category_a.id),
             sku="SKU-CA-1",
+            barcode=None,
             name="CA1",
             description=None,
             stock_minimum=0,
@@ -328,6 +442,7 @@ class ProductsHttpIntegrationTests(unittest.TestCase):
             company_id=1,
             category_id=int(category2.id),
             sku="SKU-CA-2",
+            barcode=None,
             name="CA2",
             description=None,
             stock_minimum=0,
@@ -347,6 +462,7 @@ class ProductsHttpIntegrationTests(unittest.TestCase):
             company_id=1,
             category_id=int(self.category_a.id),
             sku="SKU-ISO-A",
+            barcode=None,
             name="ISOA",
             description=None,
             stock_minimum=0,
@@ -356,6 +472,7 @@ class ProductsHttpIntegrationTests(unittest.TestCase):
             company_id=2,
             category_id=int(self.category_b.id),
             sku="SKU-ISO-B",
+            barcode=None,
             name="ISOB",
             description=None,
             stock_minimum=0,
@@ -385,6 +502,50 @@ class ProductsHttpIntegrationTests(unittest.TestCase):
         token = self._token_for(user_id=user.id, company_id=1, email=user.email)
         status, _ = self._get("/api/admin/products", token=token)
         self.assertEqual(status, 403)
+
+    def test_get_products_search_filters_by_barcode_sku_or_name(self):
+        self.repo.create_product(
+            company_id=1,
+            category_id=int(self.category_a.id),
+            sku="SKU-SEARCH-1",
+            barcode="BAR-SEARCH-1",
+            name="Coca Cola Zero",
+            description=None,
+            stock_minimum=0,
+            status="active",
+        )
+        self.repo.create_product(
+            company_id=1,
+            category_id=int(self.category_a.id),
+            sku="SKU-SEARCH-2",
+            barcode="BAR-SEARCH-2",
+            name="Agua Mineral",
+            description=None,
+            stock_minimum=0,
+            status="active",
+        )
+        token = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
+
+        status_bar, body_bar = self._get("/api/admin/products?search=BAR-SEARCH-1", token=token)
+        self.assertEqual(status_bar, 200)
+        data_bar = body_bar.get("data")
+        self.assertIsInstance(data_bar, list)
+        self.assertTrue(any(p.get("sku") == "SKU-SEARCH-1" for p in data_bar))
+        self.assertFalse(any(p.get("sku") == "SKU-SEARCH-2" for p in data_bar))
+
+        status_sku, body_sku = self._get("/api/admin/products?q=SKU-SEARCH-2", token=token)
+        self.assertEqual(status_sku, 200)
+        data_sku = body_sku.get("data")
+        self.assertIsInstance(data_sku, list)
+        self.assertTrue(any(p.get("sku") == "SKU-SEARCH-2" for p in data_sku))
+        self.assertFalse(any(p.get("sku") == "SKU-SEARCH-1" for p in data_sku))
+
+        status_name, body_name = self._get("/api/admin/products?search=Coca", token=token)
+        self.assertEqual(status_name, 200)
+        data_name = body_name.get("data")
+        self.assertIsInstance(data_name, list)
+        self.assertTrue(any(p.get("sku") == "SKU-SEARCH-1" for p in data_name))
+        self.assertFalse(any(p.get("sku") == "SKU-SEARCH-2" for p in data_name))
 
 
 if __name__ == "__main__":

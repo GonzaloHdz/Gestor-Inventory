@@ -22,6 +22,10 @@ class DuplicateSKUError(ValidationError):
     pass
 
 
+class DuplicateBarcodeError(ValidationError):
+    pass
+
+
 class InvalidCategoryError(ValidationError):
     pass
 

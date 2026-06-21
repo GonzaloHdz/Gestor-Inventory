@@ -7,7 +7,9 @@ from gestor_inventory.domain.operational import Product
 
 
 class ProductListRepository(Protocol):
-    def count_products(self, *, company_id: int, category_id: int | None, status: str | None) -> int: ...
+    def count_products(
+        self, *, company_id: int, category_id: int | None, status: str | None, search: str | None
+    ) -> int: ...
 
     def list_products(
         self,
@@ -15,6 +17,7 @@ class ProductListRepository(Protocol):
         company_id: int,
         category_id: int | None,
         status: str | None,
+        search: str | None,
         limit: int,
         offset: int,
     ) -> list[Product]: ...
@@ -25,6 +28,7 @@ class ListProductsRequest:
     company_id: int
     category_id: int | None = None
     status: str | None = "active"
+    search: str | None = None
     page: int = 1
     per_page: int = 50
 
@@ -42,15 +46,17 @@ def list_products(repo: ProductListRepository, req: ListProductsRequest) -> List
     company_id = _validate_company_id(req.company_id)
     category_id = _validate_category_id(req.category_id)
     status = _validate_status(req.status)
+    search = _normalize_search(req.search)
     page = _validate_page(req.page)
     per_page = _validate_per_page(req.per_page)
 
     offset = (page - 1) * per_page
-    total = int(repo.count_products(company_id=company_id, category_id=category_id, status=status))
+    total = int(repo.count_products(company_id=company_id, category_id=category_id, status=status, search=search))
     products = repo.list_products(
         company_id=company_id,
         category_id=category_id,
         status=status,
+        search=search,
         limit=per_page,
         offset=offset,
     )
@@ -94,3 +100,11 @@ def _validate_per_page(per_page: int) -> int:
         raise ValidationError("per_page inválido")
     return per_page
 
+
+def _normalize_search(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValidationError("search inválido")
+    v = value.strip()
+    return v or None
