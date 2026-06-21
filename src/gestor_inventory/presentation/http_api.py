@@ -994,15 +994,17 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             if authz is None:
                 return
             company_id = int(authz.get("company_id"))
-            category_id_raw = payload.get("category_id")
+            category_id_raw = payload["category_id"]
             res = create_product(
                 self.repo,
                 CreateProductRequest(
                     company_id=company_id,
                     sku=payload["sku"],
                     name=payload["name"],
-                    category_id=(int(category_id_raw) if category_id_raw is not None else None),
+                    category_id=int(category_id_raw),
                     description=payload.get("description"),
+                    stock_minimum=int(payload.get("stock_minimum", 0)),
+                    status=str(payload.get("status", "active")),
                 ),
             )
         except KeyError:
@@ -1038,7 +1040,11 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                     "sku": p.sku,
                     "name": p.name,
                     "description": p.description,
+                    "stock_minimum": p.stock_minimum,
+                    "status": p.status,
                     "is_active": p.is_active,
+                    "created_at": p.created_at,
+                    "updated_at": p.updated_at,
                 }
             },
         )

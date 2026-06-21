@@ -49,15 +49,37 @@ class Category:
 class Product:
     company_id: int
     id: int
-    category_id: int | None
+    category_id: int
     sku: str
     name: str
     description: str | None
+    stock_minimum: int
+    status: str
     is_active: bool
+    created_at: int
+    updated_at: int
 
     def __post_init__(self) -> None:
         if not isinstance(self.company_id, int) or self.company_id <= 0:
             raise ValueError("company_id inválido")
+        if not isinstance(self.category_id, int) or self.category_id <= 0:
+            raise ValueError("category_id inválido")
+        if not isinstance(self.sku, str) or not self.sku.strip():
+            raise ValueError("sku inválido")
+        if not isinstance(self.name, str) or not self.name.strip():
+            raise ValueError("name inválido")
+        if self.description is not None and (not isinstance(self.description, str) or not self.description.strip()):
+            raise ValueError("description inválido")
+        if not isinstance(self.stock_minimum, int) or self.stock_minimum < 0:
+            raise ValueError("stock_minimum inválido")
+        if not isinstance(self.status, str) or self.status not in ("active", "inactive"):
+            raise ValueError("status inválido")
+        if bool(self.is_active) != (self.status == "active"):
+            raise ValueError("inconsistencia status/is_active")
+        if not isinstance(self.created_at, int) or self.created_at <= 0:
+            raise ValueError("created_at inválido")
+        if not isinstance(self.updated_at, int) or self.updated_at <= 0:
+            raise ValueError("updated_at inválido")
 
 
 @dataclass(frozen=True)

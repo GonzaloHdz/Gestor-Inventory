@@ -331,8 +331,9 @@ class AuthorizationIntegrationTests(unittest.TestCase):
 
         branch1 = self.repo.create_branch(company_id=1, name="Casa Central", address=None, is_active=True)
         branch2_other = self.repo.create_branch(company_id=2, name="Sucursal 2", address=None, is_active=True)
+        category1 = self.repo.create_category(company_id=1, name="Cat Inv", is_active=True)
         product = self.repo.create_product(
-            company_id=1, category_id=None, sku="SKU-1", name="Prod 1", description=None, is_active=True
+            company_id=1, category_id=category1.id, sku="SKU-1", name="Prod 1", description=None, is_active=True
         )
         self.repo.upsert_inventory_item(
             company_id=1, branch_id=branch1.id, product_id=product.id, quantity=5, min_quantity=0, updated_at=123
@@ -352,7 +353,8 @@ class AuthorizationIntegrationTests(unittest.TestCase):
     def test_branch_level_isolation_denies_cross_branch_for_operational_user(self):
         branch1 = self.repo.create_branch(company_id=1, name="Sucursal 1", address=None, is_active=True)
         branch2 = self.repo.create_branch(company_id=1, name="Sucursal 2", address=None, is_active=True)
-        product = self.repo.create_product(company_id=1, category_id=None, sku="SKU-BR", name="Prod BR", description=None, is_active=True)
+        category1 = self.repo.create_category(company_id=1, name="Cat BR", is_active=True)
+        product = self.repo.create_product(company_id=1, category_id=category1.id, sku="SKU-BR", name="Prod BR", description=None, is_active=True)
         self.repo.upsert_inventory_item(
             company_id=1, branch_id=branch1.id, product_id=product.id, quantity=1, min_quantity=0, updated_at=123
         )
@@ -378,7 +380,8 @@ class AuthorizationIntegrationTests(unittest.TestCase):
     def test_branch_level_isolation_allows_admin_across_branches(self):
         branch1 = self.repo.create_branch(company_id=1, name="Sucursal 1 Admin", address=None, is_active=True)
         branch2 = self.repo.create_branch(company_id=1, name="Sucursal 2 Admin", address=None, is_active=True)
-        product = self.repo.create_product(company_id=1, category_id=None, sku="SKU-ADM", name="Prod ADM", description=None, is_active=True)
+        category1 = self.repo.create_category(company_id=1, name="Cat ADM", is_active=True)
+        product = self.repo.create_product(company_id=1, category_id=category1.id, sku="SKU-ADM", name="Prod ADM", description=None, is_active=True)
         self.repo.upsert_inventory_item(
             company_id=1, branch_id=branch1.id, product_id=product.id, quantity=3, min_quantity=0, updated_at=125
         )

@@ -14,12 +14,15 @@ class ProductRepository(Protocol):
         self,
         *,
         company_id: int,
-        category_id: int | None,
+        category_id: int,
         sku: str,
         name: str,
         description: str | None,
-        is_active: bool,
+        stock_minimum: int,
+        status: str,
     ) -> Product: ...
+
+    def get_product_by_sku(self, *, company_id: int, sku: str) -> Product | None: ...
 
 
 @dataclass(frozen=True)
@@ -27,8 +30,10 @@ class CreateProductRequest:
     company_id: int
     sku: str
     name: str
-    category_id: int | None = None
+    category_id: int
     description: str | None = None
+    stock_minimum: int = 0
+    status: str = "active"
 
 
 @dataclass(frozen=True)
@@ -41,13 +46,18 @@ def create_product(repo: ProductRepository, req: CreateProductRequest) -> Create
     sku = _validate_sku(req.sku)
     name = _validate_name(req.name)
     description = _normalize_optional(req.description)
-    category_id = _validate_optional_id(req.category_id, field="category_id")
+    category_id = _validate_category_id(req.category_id)
+    stock_minimum = _validate_stock_minimum(req.stock_minimum)
+    status = _validate_status(req.status)
 
     if not repo.company_is_active(company_id=company_id):
         raise CrossTenantReferenceError("empresa inválida")
 
-    if category_id is not None and repo.get_category_by_id(company_id=company_id, category_id=category_id) is None:
+    if repo.get_category_by_id(company_id=company_id, category_id=category_id) is None:
         raise CrossTenantReferenceError("category_id no pertenece a la empresa")
+
+    if repo.get_product_by_sku(company_id=company_id, sku=sku) is not None:
+        raise ValidationError("sku ya existe")
 
     product = repo.create_product(
         company_id=company_id,
@@ -55,7 +65,8 @@ def create_product(repo: ProductRepository, req: CreateProductRequest) -> Create
         sku=sku,
         name=name,
         description=description,
-        is_active=True,
+        stock_minimum=stock_minimum,
+        status=status,
     )
     return CreateProductResponse(product=product)
 
@@ -93,9 +104,22 @@ def _normalize_optional(value: str | None) -> str | None:
     return v or None
 
 
-def _validate_optional_id(value: int | None, *, field: str) -> int | None:
-    if value is None:
-        return None
+def _validate_category_id(value: int) -> int:
     if not isinstance(value, int) or value <= 0:
-        raise ValidationError(f"{field} inválido")
+        raise ValidationError("category_id inválido")
     return value
+
+
+def _validate_stock_minimum(value: int) -> int:
+    if not isinstance(value, int) or value < 0:
+        raise ValidationError("stock_minimum inválido")
+    return value
+
+
+def _validate_status(value: str) -> str:
+    if not isinstance(value, str):
+        raise ValidationError("status inválido")
+    v = value.strip().lower()
+    if v not in ("active", "inactive"):
+        raise ValidationError("status inválido")
+    return v

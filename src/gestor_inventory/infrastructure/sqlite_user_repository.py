@@ -733,25 +733,42 @@ class SqliteUserRepository:
         self,
         *,
         company_id: int,
-        category_id: int | None,
+        category_id: int,
         sku: str,
         name: str,
         description: str | None,
-        is_active: bool,
+        stock_minimum: int = 0,
+        status: str = "active",
+        is_active: bool | None = None,
+        created_at: int | None = None,
+        updated_at: int | None = None,
     ) -> Product:
+        status_v = str(status)
+        if is_active is not None:
+            status_v = "active" if bool(is_active) else "inactive"
+        is_active_v = status_v == "active"
+        now = int(time.time())
+        created_at_v = int(now if created_at is None else created_at)
+        updated_at_v = int(now if updated_at is None else updated_at)
         with self._connect() as conn:
             cur = conn.execute(
                 """
-                INSERT INTO products (company_id, category_id, sku, name, description, is_active)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO products (
+                  company_id, category_id, sku, name, description, stock_minimum, status, is_active, created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     int(company_id),
-                    int(category_id) if category_id is not None else None,
+                    int(category_id),
                     str(sku),
                     str(name),
                     str(description) if description is not None else None,
-                    1 if is_active else 0,
+                    int(stock_minimum),
+                    str(status_v),
+                    1 if is_active_v else 0,
+                    int(created_at_v),
+                    int(updated_at_v),
                 ),
             )
             product_id = int(cur.lastrowid)
@@ -759,11 +776,56 @@ class SqliteUserRepository:
             return Product(
                 company_id=int(company_id),
                 id=product_id,
-                category_id=int(category_id) if category_id is not None else None,
+                category_id=int(category_id),
                 sku=str(sku),
                 name=str(name),
                 description=description,
+                stock_minimum=int(stock_minimum),
+                status=str(status_v),
+                is_active=bool(is_active_v),
+                created_at=int(created_at_v),
+                updated_at=int(updated_at_v),
+            )
+
+    def get_product_by_sku(self, *, company_id: int, sku: str) -> Product | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT company_id, id, category_id, sku, name, description, stock_minimum, status, is_active, created_at, updated_at
+                FROM products
+                WHERE company_id = ? AND sku = ?
+                LIMIT 1
+                """,
+                (int(company_id), str(sku)),
+            ).fetchone()
+            if row is None:
+                return None
+            (
+                company_id_v,
+                product_id,
+                category_id,
+                sku_v,
+                name,
+                description,
+                stock_minimum,
+                status,
+                is_active,
+                created_at,
+                updated_at,
+            ) = row
+            status_v = str(status) if status is not None else ("active" if bool(is_active) else "inactive")
+            return Product(
+                company_id=int(company_id_v),
+                id=int(product_id),
+                category_id=int(category_id),
+                sku=str(sku_v),
+                name=str(name),
+                description=str(description) if description is not None else None,
+                stock_minimum=int(stock_minimum) if stock_minimum is not None else 0,
+                status=status_v,
                 is_active=bool(is_active),
+                created_at=int(created_at) if created_at is not None else 1,
+                updated_at=int(updated_at) if updated_at is not None else 1,
             )
 
     def company_is_active(self, *, company_id: int) -> bool:
@@ -1521,17 +1583,22 @@ class SqliteUserRepository:
                 CREATE TABLE IF NOT EXISTS products (
                   id INTEGER PRIMARY KEY AUTOINCREMENT,
                   company_id INTEGER NOT NULL,
-                  category_id INTEGER NULL,
+                  category_id INTEGER NOT NULL,
                   sku TEXT NOT NULL,
                   name TEXT NOT NULL,
                   description TEXT NULL,
+                  stock_minimum INTEGER NOT NULL DEFAULT 0,
+                  status TEXT NOT NULL DEFAULT 'active',
                   is_active INTEGER NOT NULL DEFAULT 1,
+                  created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+                  updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
                   CONSTRAINT products_company_id_id_unique UNIQUE (company_id, id),
                   CONSTRAINT products_company_sku_unique UNIQUE (company_id, sku),
                   CONSTRAINT products_category_fk FOREIGN KEY (company_id, category_id) REFERENCES categories (company_id, id)
                 );
                 CREATE INDEX IF NOT EXISTS products_company_id_idx ON products (company_id);
                 CREATE INDEX IF NOT EXISTS products_company_category_id_idx ON products (company_id, category_id);
+                CREATE INDEX IF NOT EXISTS products_company_sku_idx ON products (company_id, sku);
 
                 CREATE TABLE IF NOT EXISTS suppliers (
                   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1790,6 +1857,15 @@ class SqliteUserRepository:
                 conn.execute("ALTER TABLE categories ADD COLUMN description TEXT NULL")
             if "status" not in category_cols:
                 conn.execute("ALTER TABLE categories ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
+            product_cols = [row[1] for row in conn.execute("PRAGMA table_info(products)").fetchall()]
+            if "stock_minimum" not in product_cols:
+                conn.execute("ALTER TABLE products ADD COLUMN stock_minimum INTEGER NOT NULL DEFAULT 0")
+            if "status" not in product_cols:
+                conn.execute("ALTER TABLE products ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
+            if "created_at" not in product_cols:
+                conn.execute("ALTER TABLE products ADD COLUMN created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))")
+            if "updated_at" not in product_cols:
+                conn.execute("ALTER TABLE products ADD COLUMN updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))")
             conn.execute(
                 """
                 INSERT OR IGNORE INTO companies (id, name, currency, timezone, status, created_at, default_branch_id)

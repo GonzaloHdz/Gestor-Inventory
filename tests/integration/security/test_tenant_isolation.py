@@ -38,11 +38,14 @@ class TenantIsolationIntegrationTests(unittest.TestCase):
         self.branch_a = self.repo.create_branch(company_id=1, name="Sucursal A", address=None, is_active=True)
         self.branch_b = self.repo.create_branch(company_id=2, name="Sucursal B", address=None, is_active=True)
 
+        self.category_a = self.repo.create_category(company_id=1, name="Cat A", is_active=True)
+        self.category_b = self.repo.create_category(company_id=2, name="Cat B", is_active=True)
+
         self.product_a = self.repo.create_product(
-            company_id=1, category_id=None, sku="SKU-A", name="Prod A", description=None, is_active=True
+            company_id=1, category_id=self.category_a.id, sku="SKU-A", name="Prod A", description=None, is_active=True
         )
         self.product_b = self.repo.create_product(
-            company_id=2, category_id=None, sku="SKU-B", name="Prod B", description=None, is_active=True
+            company_id=2, category_id=self.category_b.id, sku="SKU-B", name="Prod B", description=None, is_active=True
         )
 
         self.repo.upsert_inventory_item(
@@ -157,7 +160,7 @@ class TenantIsolationIntegrationTests(unittest.TestCase):
         self.assertTrue(all(r.get("company_id") == 1 for r in roles))
 
     def test_direct_access_isolation_category_by_id(self):
-        category_b = self.repo.create_category(company_id=2, name="Cat B", is_active=True)
+        category_b = self.repo.create_category(company_id=2, name="Cat B Extra", is_active=True)
         token_a = self._token_for(user_id=self.user_a.id, company_id=1, email=self.user_a.email)
         status, body = self._get(f"/api/admin/categories/{category_b.id}", token=token_a)
         self.assertIn(status, (403, 404))
