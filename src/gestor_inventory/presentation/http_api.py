@@ -23,6 +23,7 @@ from gestor_inventory.application.list_rbac import (
     list_permissions,
     list_roles,
 )
+from gestor_inventory.application.list_products import ListProductsRequest, list_products
 from gestor_inventory.application.create_product import CreateProductRequest, create_product
 from gestor_inventory.application.create_supplier import CreateSupplierRequest, create_supplier
 from gestor_inventory.application.create_purchase_order import CreatePurchaseOrderRequest, create_purchase_order
@@ -83,6 +84,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/admin/suppliers":
             self._handle_list_suppliers(parsed.query)
+            return
+        if parsed.path == "/api/admin/products":
+            self._handle_list_products(parsed.query)
             return
         if parsed.path == "/api/admin/settings":
             self._handle_get_company_settings()
@@ -215,6 +219,75 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                     "per_page": res.per_page,
                     "pages": res.pages,
                 },
+            },
+        )
+
+    def _handle_list_products(self, query: str) -> None:
+        try:
+            authz = self._require_permissions({"productos:leer"})
+            if authz is None:
+                return
+            company_id = int(authz.get("company_id"))
+            params = parse_qs(query, keep_blank_values=True)
+            category_id_raw = (params.get("category_id") or [None])[0]
+            status_raw = (params.get("status") or [None])[0]
+            page_raw = (params.get("page") or ["1"])[0]
+            per_page_raw = (params.get("per_page") or ["50"])[0]
+            page = int(page_raw)
+            per_page = int(per_page_raw)
+            category_id = None if category_id_raw in (None, "") else int(category_id_raw)
+            status = "active" if status_raw is None else status_raw
+            if isinstance(status, str) and status.strip().lower() in ("", "all", "todas", "any"):
+                status = None
+            res = list_products(
+                self.repo,
+                ListProductsRequest(company_id=company_id, category_id=category_id, status=status, page=page, per_page=per_page),
+            )
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._audit_data(
+            authz,
+            action="READ",
+            resource="productos",
+            details=json.dumps(
+                {
+                    "returned": len(res.products),
+                    "page": res.page,
+                    "per_page": res.per_page,
+                    "category_id": category_id,
+                    "status": status,
+                },
+                separators=(",", ":"),
+            ),
+        )
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "data": [
+                    {
+                        "company_id": p.company_id,
+                        "id": p.id,
+                        "category_id": p.category_id,
+                        "sku": p.sku,
+                        "name": p.name,
+                        "description": p.description,
+                        "stock_minimum": p.stock_minimum,
+                        "status": p.status,
+                        "is_active": p.is_active,
+                        "created_at": p.created_at,
+                        "updated_at": p.updated_at,
+                    }
+                    for p in res.products
+                ],
+                "meta": {"total": res.total, "page": res.page, "per_page": res.per_page, "pages": res.pages},
             },
         )
 

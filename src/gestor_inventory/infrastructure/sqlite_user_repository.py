@@ -917,6 +917,77 @@ class SqliteUserRepository:
                 raise sqlite3.IntegrityError("product not found")
             return product
 
+    def count_products(self, *, company_id: int, category_id: int | None, status: str | None) -> int:
+        with self._connect() as conn:
+            sql = "SELECT COUNT(1) FROM products WHERE company_id = ?"
+            params: list[object] = [int(company_id)]
+            if category_id is not None:
+                sql += " AND category_id = ?"
+                params.append(int(category_id))
+            if status is not None:
+                sql += " AND status = ?"
+                params.append(str(status))
+            row = conn.execute(sql, params).fetchone()
+            return 0 if row is None else int(row[0])
+
+    def list_products(
+        self,
+        *,
+        company_id: int,
+        category_id: int | None,
+        status: str | None,
+        limit: int,
+        offset: int,
+    ) -> list[Product]:
+        with self._connect() as conn:
+            sql = """
+            SELECT company_id, id, category_id, sku, name, description, stock_minimum, status, is_active, created_at, updated_at
+            FROM products
+            WHERE company_id = ?
+            """
+            params: list[object] = [int(company_id)]
+            if category_id is not None:
+                sql += " AND category_id = ?"
+                params.append(int(category_id))
+            if status is not None:
+                sql += " AND status = ?"
+                params.append(str(status))
+            sql += " ORDER BY id LIMIT ? OFFSET ?"
+            params.append(int(limit))
+            params.append(int(offset))
+            rows = conn.execute(sql, params).fetchall()
+            products: list[Product] = []
+            for (
+                company_id_v,
+                product_id_v,
+                category_id_v,
+                sku_v,
+                name_v,
+                description,
+                stock_minimum,
+                status_v,
+                is_active,
+                created_at,
+                updated_at,
+            ) in rows:
+                status_out = str(status_v) if status_v is not None else ("active" if bool(is_active) else "inactive")
+                products.append(
+                    Product(
+                        company_id=int(company_id_v),
+                        id=int(product_id_v),
+                        category_id=int(category_id_v),
+                        sku=str(sku_v),
+                        name=str(name_v),
+                        description=str(description) if description is not None else None,
+                        stock_minimum=int(stock_minimum) if stock_minimum is not None else 0,
+                        status=status_out,
+                        is_active=bool(is_active),
+                        created_at=int(created_at) if created_at is not None else 1,
+                        updated_at=int(updated_at) if updated_at is not None else 1,
+                    )
+                )
+            return products
+
     def company_is_active(self, *, company_id: int) -> bool:
         with self._connect() as conn:
             row = conn.execute(

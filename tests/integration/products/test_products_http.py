@@ -77,6 +77,19 @@ class ProductsHttpIntegrationTests(unittest.TestCase):
         finally:
             conn.close()
 
+    def _get(self, path: str, token: str | None) -> tuple[int, dict]:
+        conn = http.client.HTTPConnection(self.base[0], self.base[1], timeout=2)
+        try:
+            headers = {}
+            if token is not None:
+                headers["Authorization"] = f"Bearer {token}"
+            conn.request("GET", path, headers=headers)
+            resp = conn.getresponse()
+            data = resp.read()
+            return resp.status, ({} if not data else json.loads(data.decode("utf-8")))
+        finally:
+            conn.close()
+
     def _put(self, path: str, body: dict, token: str | None) -> tuple[int, dict]:
         conn = http.client.HTTPConnection(self.base[0], self.base[1], timeout=2)
         try:
@@ -251,6 +264,127 @@ class ProductsHttpIntegrationTests(unittest.TestCase):
             token=token,
         )
         self.assertIn(status, (403, 404))
+
+    def test_get_products_pagination_200(self):
+        self.repo.create_product(
+            company_id=1,
+            category_id=int(self.category_a.id),
+            sku="SKU-L1",
+            name="L1",
+            description=None,
+            stock_minimum=0,
+            status="active",
+        )
+        self.repo.create_product(
+            company_id=1,
+            category_id=int(self.category_a.id),
+            sku="SKU-L2",
+            name="L2",
+            description=None,
+            stock_minimum=0,
+            status="active",
+        )
+        self.repo.create_product(
+            company_id=1,
+            category_id=int(self.category_a.id),
+            sku="SKU-L3",
+            name="L3",
+            description=None,
+            stock_minimum=0,
+            status="active",
+        )
+        token = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
+
+        status1, body1 = self._get("/api/admin/products?page=1&per_page=2", token=token)
+        self.assertEqual(status1, 200)
+        data1 = body1.get("data")
+        self.assertIsInstance(data1, list)
+        self.assertEqual(len(data1), 2)
+        meta1 = body1.get("meta")
+        self.assertIsInstance(meta1, dict)
+        self.assertEqual(meta1.get("total"), 3)
+        self.assertEqual(meta1.get("page"), 1)
+        self.assertEqual(meta1.get("per_page"), 2)
+        self.assertEqual(meta1.get("pages"), 2)
+
+        status2, body2 = self._get("/api/admin/products?page=2&per_page=2", token=token)
+        self.assertEqual(status2, 200)
+        data2 = body2.get("data")
+        self.assertIsInstance(data2, list)
+        self.assertEqual(len(data2), 1)
+
+    def test_get_products_filter_by_category_id(self):
+        category2 = self.repo.create_category(company_id=1, name="Cat A HTTP 2", is_active=True)
+        self.repo.create_product(
+            company_id=1,
+            category_id=int(self.category_a.id),
+            sku="SKU-CA-1",
+            name="CA1",
+            description=None,
+            stock_minimum=0,
+            status="active",
+        )
+        self.repo.create_product(
+            company_id=1,
+            category_id=int(category2.id),
+            sku="SKU-CA-2",
+            name="CA2",
+            description=None,
+            stock_minimum=0,
+            status="active",
+        )
+        token = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
+        status, body = self._get(f"/api/admin/products?category_id={int(category2.id)}", token=token)
+        self.assertEqual(status, 200)
+        data = body.get("data")
+        self.assertIsInstance(data, list)
+        self.assertTrue(all(int(p.get("category_id")) == int(category2.id) for p in data))
+        self.assertTrue(any(p.get("sku") == "SKU-CA-2" for p in data))
+        self.assertFalse(any(p.get("sku") == "SKU-CA-1" for p in data))
+
+    def test_get_products_isolated_by_company_id(self):
+        self.repo.create_product(
+            company_id=1,
+            category_id=int(self.category_a.id),
+            sku="SKU-ISO-A",
+            name="ISOA",
+            description=None,
+            stock_minimum=0,
+            status="active",
+        )
+        self.repo.create_product(
+            company_id=2,
+            category_id=int(self.category_b.id),
+            sku="SKU-ISO-B",
+            name="ISOB",
+            description=None,
+            stock_minimum=0,
+            status="active",
+        )
+        token = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
+        status, body = self._get("/api/admin/products", token=token)
+        self.assertEqual(status, 200)
+        data = body.get("data")
+        self.assertIsInstance(data, list)
+        self.assertTrue(all(p.get("company_id") == 1 for p in data))
+        self.assertFalse(any(p.get("sku") == "SKU-ISO-B" for p in data))
+
+    def test_get_products_requires_permission_403(self):
+        self.repo._persistent_conn.execute(
+            "INSERT OR IGNORE INTO roles (company_id, id, name, is_system) VALUES (?, ?, ?, 0)",
+            (1, 99, "SinPermisos"),
+        )
+        self.repo._persistent_conn.commit()
+        password_hash_v = hash_password("Strong1!")
+        user, _ = self.repo.create_user_with_role(
+            company_id=1,
+            email="noperms@example.com",
+            password_hash=password_hash_v,
+            role_id=99,
+        )
+        token = self._token_for(user_id=user.id, company_id=1, email=user.email)
+        status, _ = self._get("/api/admin/products", token=token)
+        self.assertEqual(status, 403)
 
 
 if __name__ == "__main__":
