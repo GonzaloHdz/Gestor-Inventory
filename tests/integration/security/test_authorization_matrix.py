@@ -140,6 +140,7 @@ class AuthorizationIntegrationTests(unittest.TestCase):
         matrix = [
             ("GET", "/api/admin/roles", None),
             ("GET", "/api/admin/permissions", None),
+            ("POST", "/api/admin/users", {"email": "nuevo@example.com", "password": "Secret1!", "role_id": 10}),
             ("POST", "/api/admin/user-roles/assign", {"company_id": 1, "user_id": None, "role_id": 11}),
             ("POST", "/api/admin/user-roles/revoke", {"company_id": 1, "user_id": None, "role_id": 11}),
         ]
@@ -147,6 +148,7 @@ class AuthorizationIntegrationTests(unittest.TestCase):
         expected_allowed_role_ids = {
             "/api/admin/roles": {12, 13},
             "/api/admin/permissions": {12, 13},
+            "/api/admin/users": {12, 13},
             "/api/admin/user-roles/assign": {12, 13},
             "/api/admin/user-roles/revoke": {12, 13},
         }
@@ -162,10 +164,13 @@ class AuthorizationIntegrationTests(unittest.TestCase):
                         status, _ = self._get(path, token=token)
                     else:
                         payload = dict(body or {})
-                        payload["user_id"] = self.target_company1.id
+                        if path == "/api/admin/users":
+                            payload["email"] = f"nuevo-{role_id}@example.com"
+                        else:
+                            payload["user_id"] = self.target_company1.id
                         status, _ = self._post(path, payload, token=token)
                     if role_id in expected_allowed_role_ids[path]:
-                        self.assertEqual(status, 200)
+                        self.assertIn(status, (200, 201))
                     else:
                         self.assertEqual(status, 403)
 
@@ -411,6 +416,29 @@ class AuthorizationIntegrationTests(unittest.TestCase):
         self.assertEqual(status, 200)
         logs = self._data_audit_logs()
         self.assertTrue(any(l["company_id"] == 1 and l["user_id"] == admin_company1.id and l["action"] == "CREATE" and l["resource"] == "roles" for l in logs))
+
+    def test_admin_cannot_assign_superadmin_role(self):
+        admin_company1 = self.users[(1, 12)]
+        token = self._token_for(user_id=admin_company1.id, company_id=1, email=admin_company1.email)
+        status, body = self._post(
+            "/api/admin/user-roles/assign",
+            {"company_id": 1, "user_id": self.target_company1.id, "role_id": 13},
+            token=token,
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(body.get("error"), "forbidden")
+
+    def test_admin_cannot_modify_superadmin_target(self):
+        admin_company1 = self.users[(1, 12)]
+        superadmin_company1 = self.users[(1, 13)]
+        token = self._token_for(user_id=admin_company1.id, company_id=1, email=admin_company1.email)
+        status, body = self._post(
+            "/api/admin/user-roles/revoke",
+            {"company_id": 1, "user_id": superadmin_company1.id, "role_id": 13},
+            token=token,
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(body.get("error"), "forbidden")
 
     def test_create_company_requires_superadmin_permission(self):
         admin_company1 = self.users[(1, 12)]

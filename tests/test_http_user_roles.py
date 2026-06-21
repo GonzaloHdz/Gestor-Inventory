@@ -52,6 +52,12 @@ class HttpUserRolesTests(unittest.TestCase):
             password_hash=password_hash,
             role_id=12,
         )
+        self.superadmin_user, _ = self.repo.create_user_with_role(
+            company_id=1,
+            email="superadmin@example.com",
+            password_hash=password_hash,
+            role_id=13,
+        )
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), HttpApiHandler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -121,6 +127,77 @@ class HttpUserRolesTests(unittest.TestCase):
         self.assertEqual(status, 403)
         self.assertEqual(body.get("error"), "forbidden")
 
+    def test_create_internal_user_requires_auth(self):
+        status, body = self._post(
+            "/api/admin/users",
+            {"email": "nuevo@example.com", "password": "Secret1!", "role_id": 10},
+            token=None,
+        )
+        self.assertEqual(status, 401)
+        self.assertEqual(body.get("error"), "unauthorized")
+
+    def test_create_internal_user_rejects_without_permissions(self):
+        token = self._token_for(user_id=self.normal_user.id, company_id=1, email=self.normal_user.email)
+        status, body = self._post(
+            "/api/admin/users",
+            {"email": "nuevo@example.com", "password": "Secret1!", "role_id": 10},
+            token=token,
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(body.get("error"), "forbidden")
+
+    def test_create_internal_user_creates_user_in_actor_company(self):
+        token = self._token_for(user_id=self.admin_user.id, company_id=1, email=self.admin_user.email)
+        status, body = self._post(
+            "/api/admin/users",
+            {
+                "company_id": 2,
+                "email": "nuevo@example.com",
+                "password": "Secret1!",
+                "role_id": 10,
+            },
+            token=token,
+        )
+        self.assertEqual(status, 201)
+        user = body.get("user", {})
+        self.assertEqual(user.get("company_id"), 1)
+        self.assertEqual(user.get("email"), "nuevo@example.com")
+        self.assertEqual(user.get("role_id"), 10)
+        self.assertFalse(user.get("verified"))
+        self.assertIn("verification_url", body)
+
+        created_user_id = user.get("id")
+        self.assertIsInstance(created_user_id, int)
+        role_names = set(self.repo.list_user_role_names(company_id=1, user_id=created_user_id))
+        self.assertIn("Almacenista", role_names)
+
+    def test_admin_cannot_create_superadmin_user(self):
+        token = self._token_for(user_id=self.admin_user.id, company_id=1, email=self.admin_user.email)
+        status, body = self._post(
+            "/api/admin/users",
+            {"email": "supernuevo@example.com", "password": "Secret1!", "role_id": 13},
+            token=token,
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(body.get("error"), "forbidden")
+
+    def test_superadmin_can_create_superadmin_user(self):
+        token = self._token_for(
+            user_id=self.other_company_admin.id,
+            company_id=2,
+            email=self.other_company_admin.email,
+        )
+        self.repo.assign_role_to_user(company_id=2, user_id=self.other_company_admin.id, role_id=13)
+        status, body = self._post(
+            "/api/admin/users",
+            {"email": "super2@example.com", "password": "Secret1!", "role_id": 13},
+            token=token,
+        )
+        self.assertEqual(status, 201)
+        user = body.get("user", {})
+        self.assertEqual(user.get("company_id"), 2)
+        self.assertEqual(user.get("role_id"), 13)
+
     def test_assign_and_revoke_role(self):
         token = self._token_for(user_id=self.admin_user.id, company_id=1, email=self.admin_user.email)
 
@@ -145,6 +222,56 @@ class HttpUserRolesTests(unittest.TestCase):
         self.assertEqual(body.get("changed"), True)
         role_names = set(self.repo.list_user_role_names(company_id=1, user_id=self.normal_user.id))
         self.assertNotIn("Supervisor", role_names)
+
+    def test_assign_rejects_self_escalation(self):
+        token = self._token_for(user_id=self.admin_user.id, company_id=1, email=self.admin_user.email)
+        status, body = self._post(
+            "/api/admin/user-roles/assign",
+            {"company_id": 1, "user_id": self.admin_user.id, "role_id": 13},
+            token=token,
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(body.get("error"), "forbidden")
+
+    def test_admin_cannot_assign_superadmin_role(self):
+        token = self._token_for(user_id=self.admin_user.id, company_id=1, email=self.admin_user.email)
+        status, body = self._post(
+            "/api/admin/user-roles/assign",
+            {"company_id": 1, "user_id": self.normal_user.id, "role_id": 13},
+            token=token,
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(body.get("error"), "forbidden")
+
+    def test_admin_cannot_modify_superadmin_roles(self):
+        token = self._token_for(user_id=self.admin_user.id, company_id=1, email=self.admin_user.email)
+        status, body = self._post(
+            "/api/admin/user-roles/revoke",
+            {"company_id": 1, "user_id": self.superadmin_user.id, "role_id": 13},
+            token=token,
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(body.get("error"), "forbidden")
+
+    def test_superadmin_can_assign_and_revoke_superadmin_role(self):
+        token = self._token_for(user_id=self.superadmin_user.id, company_id=1, email=self.superadmin_user.email)
+        status_assign, body_assign = self._post(
+            "/api/admin/user-roles/assign",
+            {"company_id": 1, "user_id": self.normal_user.id, "role_id": 13},
+            token=token,
+        )
+        self.assertEqual(status_assign, 200)
+        self.assertEqual(body_assign.get("changed"), True)
+        self.assertIn("Superadministrador", set(self.repo.list_user_role_names(company_id=1, user_id=self.normal_user.id)))
+
+        status_revoke, body_revoke = self._post(
+            "/api/admin/user-roles/revoke",
+            {"company_id": 1, "user_id": self.normal_user.id, "role_id": 13},
+            token=token,
+        )
+        self.assertEqual(status_revoke, 200)
+        self.assertEqual(body_revoke.get("changed"), True)
+        self.assertNotIn("Superadministrador", set(self.repo.list_user_role_names(company_id=1, user_id=self.normal_user.id)))
 
     def test_company_isolation_rejects_cross_tenant_target_user(self):
         token = self._token_for(user_id=self.admin_user.id, company_id=1, email=self.admin_user.email)

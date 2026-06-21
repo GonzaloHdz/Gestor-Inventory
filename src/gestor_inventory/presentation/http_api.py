@@ -13,6 +13,7 @@ from gestor_inventory.application.categories import (
 )
 from gestor_inventory.application.branches import CreateBranchRequest, create_branch
 from gestor_inventory.application.create_company import CreateCompanyRequest, create_company
+from gestor_inventory.application.create_internal_user import CreateInternalUserRequest, create_internal_user
 from gestor_inventory.application.set_company_default_branch import SetCompanyDefaultBranchRequest, set_company_default_branch
 from gestor_inventory.application.deactivate_branch import DeactivateBranchRequest, deactivate_branch
 from gestor_inventory.application.get_company_settings import GetCompanySettingsRequest, get_company_settings
@@ -52,6 +53,7 @@ from gestor_inventory.domain.errors import (
     DuplicateBarcodeError,
     DuplicateSKUError,
     EmailAlreadyExistsError,
+    ForbiddenError,
     InvalidCategoryError,
     InvalidSupplierError,
     InvalidCredentialsError,
@@ -415,6 +417,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         if self.path == "/api/admin/branches":
             self._handle_create_branch()
             return
+        if self.path == "/api/admin/users":
+            self._handle_create_internal_user()
+            return
         if self.path == "/api/admin/categories":
             self._handle_create_category()
             return
@@ -662,6 +667,67 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                     "status": b.status,
                     "is_active": b.is_active,
                 }
+            },
+        )
+
+    def _handle_create_internal_user(self) -> None:
+        try:
+            authz = self._require_permissions({"usuarios:crear"})
+            if authz is None:
+                return
+            payload = self._read_json()
+            company_id = int(authz.get("company_id"))
+            actor_user_id = int(authz.get("sub"))
+            req = CreateInternalUserRequest(
+                company_id=company_id,
+                actor_user_id=actor_user_id,
+                email=payload["email"],
+                password=payload["password"],
+                role_id=int(payload["role_id"]),
+            )
+            host = self.headers.get("Host", "127.0.0.1")
+            base_url = f"http://{host}"
+            res = create_internal_user(self.repo, req, base_url=base_url)
+        except KeyError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except ForbiddenError as e:
+            self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": str(e) or "Prohibido"})
+            return
+        except NotFoundError:
+            self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            return
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except EmailAlreadyExistsError:
+            self._send_json(HTTPStatus.CONFLICT, {"error": "email_already_exists"})
+            return
+        except json.JSONDecodeError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._audit_data(
+            authz,
+            action="CREATE",
+            resource="usuarios",
+            details=json.dumps({"user_id": res.user.id, "role_id": res.role_id, "email": res.user.email}, separators=(",", ":")),
+        )
+        self._send_json(
+            HTTPStatus.CREATED,
+            {
+                "user": {
+                    "id": res.user.id,
+                    "company_id": res.user.company_id,
+                    "email": res.user.email,
+                    "is_active": res.user.is_active,
+                    "verified": res.user.verified,
+                    "role_id": res.role_id,
+                },
+                "verification_url": res.verification_url,
             },
         )
 
@@ -1484,12 +1550,16 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 return
             req = AssignUserRoleRequest(
                 company_id=company_id,
+                actor_user_id=int(authz.get("sub")),
                 user_id=int(payload["user_id"]),
                 role_id=int(payload["role_id"]),
             )
             res = assign_user_role(self.repo, req)
         except KeyError:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except ForbiddenError as e:
+            self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": str(e) or "Prohibido"})
             return
         except NotFoundError as e:
             self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found", "message": str(e)})
@@ -1527,12 +1597,16 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 return
             req = RevokeUserRoleRequest(
                 company_id=company_id,
+                actor_user_id=int(authz.get("sub")),
                 user_id=int(payload["user_id"]),
                 role_id=int(payload["role_id"]),
             )
             res = revoke_user_role(self.repo, req)
         except KeyError:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except ForbiddenError as e:
+            self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": str(e) or "Prohibido"})
             return
         except NotFoundError as e:
             self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found", "message": str(e)})
