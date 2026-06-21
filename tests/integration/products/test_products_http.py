@@ -133,6 +133,7 @@ class ProductsHttpIntegrationTests(unittest.TestCase):
             ("SKU-HTTP-1",),
         ).fetchone()
         self.assertIsNotNone(row)
+        self.assertEqual(int(row[0]), 1)
 
     def test_post_product_saves_barcode_and_description_201(self):
         token = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
@@ -180,6 +181,23 @@ class ProductsHttpIntegrationTests(unittest.TestCase):
             "Ya existe un producto registrado con este SKU o código en tu empresa. Por favor, utiliza uno diferente.",
         )
 
+    def test_post_product_same_sku_cross_tenant_allows_201(self):
+        token_a = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
+        status_a, _ = self._post(
+            "/api/admin/products",
+            {"sku": "TEST-123", "name": "Tenant A", "category_id": int(self.category_a.id)},
+            token=token_a,
+        )
+        self.assertEqual(status_a, 201)
+
+        token_b = self._token_for(user_id=self.admin_b.id, company_id=2, email=self.admin_b.email)
+        status_b, _ = self._post(
+            "/api/admin/products",
+            {"sku": "TEST-123", "name": "Tenant B", "category_id": int(self.category_b.id)},
+            token=token_b,
+        )
+        self.assertEqual(status_b, 201)
+
     def test_post_product_duplicate_barcode_returns_400(self):
         token = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
         self._post(
@@ -214,6 +232,7 @@ class ProductsHttpIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(status, 400)
         self.assertEqual(body.get("error"), "invalid_category")
+        self.assertEqual(body.get("message"), "La categoría no pertenece a esta empresa")
 
     def test_post_product_requires_permission_403(self):
         token = self._token_for(user_id=self.almacenista_a.id, company_id=1, email=self.almacenista_a.email)
