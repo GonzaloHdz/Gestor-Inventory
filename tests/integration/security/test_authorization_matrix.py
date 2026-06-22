@@ -119,6 +119,33 @@ class AuthorizationIntegrationTests(unittest.TestCase):
         finally:
             conn.close()
 
+    def _put(self, path: str, body: dict, token: str | None) -> tuple[int, dict]:
+        conn = http.client.HTTPConnection(self.base[0], self.base[1], timeout=2)
+        try:
+            headers = {"Content-Type": "application/json"}
+            if token is not None:
+                headers["Authorization"] = f"Bearer {token}"
+            raw = json.dumps(body).encode("utf-8")
+            conn.request("PUT", path, body=raw, headers=headers)
+            resp = conn.getresponse()
+            data = resp.read()
+            return resp.status, ({} if not data else json.loads(data.decode("utf-8")))
+        finally:
+            conn.close()
+
+    def _delete(self, path: str, token: str | None) -> tuple[int, dict]:
+        conn = http.client.HTTPConnection(self.base[0], self.base[1], timeout=2)
+        try:
+            headers = {}
+            if token is not None:
+                headers["Authorization"] = f"Bearer {token}"
+            conn.request("DELETE", path, headers=headers)
+            resp = conn.getresponse()
+            data = resp.read()
+            return resp.status, ({} if not data else json.loads(data.decode("utf-8")))
+        finally:
+            conn.close()
+
     def _data_audit_logs(self) -> list[dict]:
         conn = self.repo._persistent_conn
         rows = conn.execute(
@@ -138,15 +165,19 @@ class AuthorizationIntegrationTests(unittest.TestCase):
 
     def test_matrix_access_by_role(self):
         matrix = [
+            ("GET", "/api/users", None),
             ("GET", "/api/admin/roles", None),
             ("GET", "/api/admin/permissions", None),
+            ("POST", "/api/admin/users", {"email": "nuevo@example.com", "password": "Secret1!", "role_id": 10}),
             ("POST", "/api/admin/user-roles/assign", {"company_id": 1, "user_id": None, "role_id": 11}),
             ("POST", "/api/admin/user-roles/revoke", {"company_id": 1, "user_id": None, "role_id": 11}),
         ]
 
         expected_allowed_role_ids = {
+            "/api/users": {12, 13},
             "/api/admin/roles": {12, 13},
             "/api/admin/permissions": {12, 13},
+            "/api/admin/users": {12, 13},
             "/api/admin/user-roles/assign": {12, 13},
             "/api/admin/user-roles/revoke": {12, 13},
         }
@@ -162,12 +193,96 @@ class AuthorizationIntegrationTests(unittest.TestCase):
                         status, _ = self._get(path, token=token)
                     else:
                         payload = dict(body or {})
-                        payload["user_id"] = self.target_company1.id
+                        if path == "/api/admin/users":
+                            payload["email"] = f"nuevo-{role_id}@example.com"
+                        else:
+                            payload["user_id"] = self.target_company1.id
                         status, _ = self._post(path, payload, token=token)
                     if role_id in expected_allowed_role_ids[path]:
-                        self.assertEqual(status, 200)
+                        self.assertIn(status, (200, 201))
                     else:
                         self.assertEqual(status, 403)
+
+    def test_list_users_isolated_and_audited(self):
+        admin = self.users[(1, 12)]
+        token = self._token_for(user_id=admin.id, company_id=1, email=admin.email)
+
+        status, body = self._get("/api/users?page=1&per_page=20", token=token)
+        self.assertEqual(status, 200)
+        self.assertTrue(all(item.get("company_id") == 1 for item in body.get("data", [])))
+        self.assertFalse(any(item.get("email") == "admin2@example.com" for item in body.get("data", [])))
+        self.assertEqual(body.get("pagination", {}).get("page"), 1)
+
+        logs = self._data_audit_logs()
+        self.assertTrue(
+            any(
+                l["company_id"] == 1
+                and l["user_id"] == admin.id
+                and l["action"] == "READ"
+                and l["resource"] == "usuarios"
+                for l in logs
+            )
+        )
+
+    def test_user_detail_update_delete_require_admin_permissions_and_are_audited(self):
+        target = self.target_company1
+
+        almacenista = self.users[(1, 10)]
+        token_almacenista = self._token_for(user_id=almacenista.id, company_id=1, email=almacenista.email)
+        status_get_forbidden, _ = self._get(f"/api/users/{target.id}", token=token_almacenista)
+        self.assertEqual(status_get_forbidden, 403)
+
+        status_patch_forbidden, _ = self._patch(
+            f"/api/users/{target.id}",
+            {"verified": True},
+            token=token_almacenista,
+        )
+        self.assertEqual(status_patch_forbidden, 403)
+
+        status_delete_forbidden, _ = self._delete(f"/api/users/{target.id}", token=token_almacenista)
+        self.assertEqual(status_delete_forbidden, 403)
+
+        admin = self.users[(1, 12)]
+        token_admin = self._token_for(user_id=admin.id, company_id=1, email=admin.email)
+
+        status_get_ok, body_get_ok = self._get(f"/api/users/{target.id}", token=token_admin)
+        self.assertEqual(status_get_ok, 200)
+        self.assertEqual(body_get_ok.get("user", {}).get("company_id"), 1)
+
+        status_patch_ok, body_patch_ok = self._put(
+            f"/api/users/{target.id}",
+            {"email": "matrix-updated@example.com", "verified": True},
+            token=token_admin,
+        )
+        self.assertEqual(status_patch_ok, 200)
+        self.assertEqual(body_patch_ok.get("user", {}).get("email"), "matrix-updated@example.com")
+        self.assertEqual(body_patch_ok.get("user", {}).get("verified"), True)
+
+        status_delete_ok, body_delete_ok = self._delete(f"/api/users/{target.id}", token=token_admin)
+        self.assertEqual(status_delete_ok, 200)
+        self.assertEqual(body_delete_ok.get("changed"), True)
+
+        logs = self._data_audit_logs()
+        self.assertTrue(any(l["company_id"] == 1 and l["user_id"] == admin.id and l["action"] == "READ" and l["resource"] == "usuarios" for l in logs))
+        self.assertTrue(any(l["company_id"] == 1 and l["user_id"] == admin.id and l["action"] == "UPDATE" and l["resource"] == "usuarios" for l in logs))
+        self.assertTrue(any(l["company_id"] == 1 and l["user_id"] == admin.id and l["action"] == "DELETE" and l["resource"] == "usuarios" for l in logs))
+
+    def test_user_crud_endpoints_keep_tenant_isolation(self):
+        admin_company1 = self.users[(1, 12)]
+        token = self._token_for(user_id=admin_company1.id, company_id=1, email=admin_company1.email)
+
+        status_get, _ = self._get(f"/api/users/{self.target_company2.id}", token=token)
+        self.assertEqual(status_get, 404)
+
+        status_update, _ = self._patch(
+            f"/api/users/{self.target_company2.id}",
+            {"email": "cross-tenant@example.com"},
+            token=token,
+        )
+        self.assertEqual(status_update, 404)
+
+        status_delete, _ = self._delete(f"/api/users/{self.target_company2.id}", token=token)
+        self.assertEqual(status_delete, 404)
 
     def test_multi_tenant_isolation_never_returns_200(self):
         admin = self.users[(1, 12)]
@@ -235,7 +350,7 @@ class AuthorizationIntegrationTests(unittest.TestCase):
             token=token,
         )
         self.assertEqual(status, 400)
-        self.assertEqual(body.get("error"), "validation_error")
+        self.assertEqual(body.get("error"), "invalid_category")
 
     def test_create_branch_rejects_inactive_company(self):
         conn = self.repo._persistent_conn
@@ -411,6 +526,29 @@ class AuthorizationIntegrationTests(unittest.TestCase):
         self.assertEqual(status, 200)
         logs = self._data_audit_logs()
         self.assertTrue(any(l["company_id"] == 1 and l["user_id"] == admin_company1.id and l["action"] == "CREATE" and l["resource"] == "roles" for l in logs))
+
+    def test_admin_cannot_assign_superadmin_role(self):
+        admin_company1 = self.users[(1, 12)]
+        token = self._token_for(user_id=admin_company1.id, company_id=1, email=admin_company1.email)
+        status, body = self._post(
+            "/api/admin/user-roles/assign",
+            {"company_id": 1, "user_id": self.target_company1.id, "role_id": 13},
+            token=token,
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(body.get("error"), "forbidden")
+
+    def test_admin_cannot_modify_superadmin_target(self):
+        admin_company1 = self.users[(1, 12)]
+        superadmin_company1 = self.users[(1, 13)]
+        token = self._token_for(user_id=admin_company1.id, company_id=1, email=admin_company1.email)
+        status, body = self._post(
+            "/api/admin/user-roles/revoke",
+            {"company_id": 1, "user_id": superadmin_company1.id, "role_id": 13},
+            token=token,
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(body.get("error"), "forbidden")
 
     def test_create_company_requires_superadmin_permission(self):
         admin_company1 = self.users[(1, 12)]

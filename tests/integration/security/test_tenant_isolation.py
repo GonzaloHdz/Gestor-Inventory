@@ -177,7 +177,7 @@ class TenantIsolationIntegrationTests(unittest.TestCase):
         )
         self.assertIn(status, (400, 403))
         if status == 400:
-            self.assertEqual(body.get("error"), "validation_error")
+            self.assertEqual(body.get("error"), "invalid_category")
 
         row = self.repo._persistent_conn.execute("SELECT 1 FROM products WHERE sku = ? LIMIT 1", ("SKU-CT",)).fetchone()
         self.assertIsNone(row)

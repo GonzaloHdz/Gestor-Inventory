@@ -20,45 +20,47 @@ class PasswordResetTests(unittest.TestCase):
         self.jwt_secret = "test-secret"
 
     def test_password_reset_happy_path_updates_password(self):
-        register_user(
+        reg = register_user(
             self.repo,
-            RegisterUserRequest(company_id=1, email="user@example.com", password="OldPass1!", role_id=10),
+            RegisterUserRequest(email="user@example.com", password="OldPass1!", company_name="Reset One"),
         )
         res_req = request_password_reset(
             self.repo,
-            RequestPasswordResetRequest(company_id=1, email="user@example.com"),
+            RequestPasswordResetRequest(company_id=reg.company.id, email="user@example.com"),
             now=1_000_000,
         )
         self.assertIsInstance(res_req.reset_token, str)
         self.assertTrue(res_req.reset_token)
-        self.assertIn("company_id=1", res_req.reset_url)
+        self.assertIn(f"company_id={reg.company.id}", res_req.reset_url)
 
         reset_password(
             self.repo,
-            ResetPasswordRequest(company_id=1, token=res_req.reset_token, new_password="NewPass1!"),
+            ResetPasswordRequest(company_id=reg.company.id, token=res_req.reset_token, new_password="NewPass1!"),
             now=1_000_010,
         )
+        self.repo._persistent_conn.execute("UPDATE users SET verified = 1 WHERE company_id = ? AND id = ?", (reg.company.id, reg.user.id))
+        self.repo._persistent_conn.commit()
 
         login_user(
             self.repo,
-            LoginRequest(company_id=1, email="user@example.com", password="NewPass1!"),
+            LoginRequest(company_id=reg.company.id, email="user@example.com", password="NewPass1!"),
             jwt_secret=self.jwt_secret,
         )
 
     def test_password_reset_rejects_weak_password_with_clear_message(self):
-        register_user(
+        reg = register_user(
             self.repo,
-            RegisterUserRequest(company_id=1, email="user@example.com", password="OldPass1!", role_id=10),
+            RegisterUserRequest(email="user@example.com", password="OldPass1!", company_name="Reset Weak"),
         )
         res_req = request_password_reset(
             self.repo,
-            RequestPasswordResetRequest(company_id=1, email="user@example.com"),
+            RequestPasswordResetRequest(company_id=reg.company.id, email="user@example.com"),
             now=1_000_000,
         )
         with self.assertRaises(ValidationError) as ctx:
             reset_password(
                 self.repo,
-                ResetPasswordRequest(company_id=1, token=res_req.reset_token, new_password="weak"),
+                ResetPasswordRequest(company_id=reg.company.id, token=res_req.reset_token, new_password="weak"),
                 now=1_000_010,
             )
         msg = str(ctx.exception)
@@ -66,45 +68,45 @@ class PasswordResetTests(unittest.TestCase):
         self.assertIn("mínimo 8 caracteres", msg)
 
     def test_password_reset_token_is_one_time_use(self):
-        register_user(
+        reg = register_user(
             self.repo,
-            RegisterUserRequest(company_id=1, email="user@example.com", password="OldPass1!", role_id=10),
+            RegisterUserRequest(email="user@example.com", password="OldPass1!", company_name="Reset Token"),
         )
         res_req = request_password_reset(
             self.repo,
-            RequestPasswordResetRequest(company_id=1, email="user@example.com"),
+            RequestPasswordResetRequest(company_id=reg.company.id, email="user@example.com"),
             now=1_000_000,
         )
         reset_password(
             self.repo,
-            ResetPasswordRequest(company_id=1, token=res_req.reset_token, new_password="NewPass1!"),
+            ResetPasswordRequest(company_id=reg.company.id, token=res_req.reset_token, new_password="NewPass1!"),
             now=1_000_010,
         )
         with self.assertRaises(PasswordResetTokenInvalidError):
             reset_password(
                 self.repo,
-                ResetPasswordRequest(company_id=1, token=res_req.reset_token, new_password="OtherPass1!"),
+                ResetPasswordRequest(company_id=reg.company.id, token=res_req.reset_token, new_password="OtherPass1!"),
                 now=1_000_020,
             )
 
     def test_password_reset_is_isolated_by_company(self):
-        register_user(
+        reg_a = register_user(
             self.repo,
-            RegisterUserRequest(company_id=1, email="a@b.com", password="OldPass1!", role_id=10),
+            RegisterUserRequest(email="a@b.com", password="OldPass1!", company_name="Reset A"),
         )
-        register_user(
+        reg_b = register_user(
             self.repo,
-            RegisterUserRequest(company_id=2, email="a@b.com", password="OldPass2!", role_id=10),
+            RegisterUserRequest(email="a@b.com", password="OldPass2!", company_name="Reset B"),
         )
         res_req = request_password_reset(
             self.repo,
-            RequestPasswordResetRequest(company_id=1, email="a@b.com"),
+            RequestPasswordResetRequest(company_id=reg_a.company.id, email="a@b.com"),
             now=1_000_000,
         )
         with self.assertRaises(PasswordResetTokenInvalidError):
             reset_password(
                 self.repo,
-                ResetPasswordRequest(company_id=2, token=res_req.reset_token, new_password="NewPass1!"),
+                ResetPasswordRequest(company_id=reg_b.company.id, token=res_req.reset_token, new_password="NewPass1!"),
                 now=1_000_010,
             )
 

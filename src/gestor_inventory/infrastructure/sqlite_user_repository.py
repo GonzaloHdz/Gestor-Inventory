@@ -3,7 +3,8 @@ from contextlib import contextmanager
 import time
 import unicodedata
 
-from gestor_inventory.domain.errors import EmailAlreadyExistsError
+from gestor_inventory.application.list_users import UserListItem
+from gestor_inventory.domain.errors import EmailAlreadyExistsError, ValidationError
 from gestor_inventory.domain.company import Company
 from gestor_inventory.domain.company_setting import CompanySetting
 from gestor_inventory.domain.operational import Branch, InventoryItem, InventoryMovement, Product, Supplier
@@ -109,6 +110,198 @@ class SqliteUserRepository:
                 "verified": bool(verified),
             }
 
+    def get_user_for_refresh(self, *, company_id: int, user_id: int) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, company_id, email, is_active, verified
+                FROM users
+                WHERE company_id = ? AND id = ?
+                LIMIT 1
+                """,
+                (int(company_id), int(user_id)),
+            ).fetchone()
+            if row is None:
+                return None
+            user_id_v, company_id_v, email_v, is_active, verified = row
+            return {
+                "id": int(user_id_v),
+                "company_id": int(company_id_v),
+                "email": str(email_v),
+                "is_active": bool(is_active),
+                "verified": bool(verified),
+            }
+
+    def get_user_for_verification(self, *, company_id: int, email: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, company_id, email, is_active, verified
+                FROM users
+                WHERE company_id = ? AND email = ?
+                LIMIT 1
+                """,
+                (int(company_id), str(email)),
+            ).fetchone()
+            if row is None:
+                return None
+            user_id_v, company_id_v, email_v, is_active, verified = row
+            return {
+                "id": int(user_id_v),
+                "company_id": int(company_id_v),
+                "email": str(email_v),
+                "is_active": bool(is_active),
+                "verified": bool(verified),
+            }
+
+    def get_user_by_id(self, *, company_id: int, user_id: int) -> User | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, company_id, email, password_hash, is_active, verified
+                FROM users
+                WHERE company_id = ? AND id = ?
+                LIMIT 1
+                """,
+                (int(company_id), int(user_id)),
+            ).fetchone()
+            if row is None:
+                return None
+            user_id_v, company_id_v, email_v, password_hash, is_active, verified = row
+            return User(
+                id=int(user_id_v),
+                company_id=int(company_id_v),
+                email=str(email_v),
+                password_hash=str(password_hash),
+                is_active=bool(is_active),
+                verified=bool(verified),
+            )
+
+    def count_users_by_company(self, *, company_id: int) -> int:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM users
+                WHERE company_id = ?
+                """,
+                (int(company_id),),
+            ).fetchone()
+            return 0 if row is None else int(row[0])
+
+    def list_users_by_company(self, *, company_id: int, limit: int, offset: int) -> list[UserListItem]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    u.id,
+                    u.company_id,
+                    u.email,
+                    u.is_active,
+                    u.verified,
+                    COALESCE(
+                        (
+                            SELECT GROUP_CONCAT(role_name, '|')
+                            FROM (
+                                SELECT r.name AS role_name
+                                FROM user_roles ur
+                                JOIN roles r ON r.company_id = ur.company_id AND r.id = ur.role_id
+                                WHERE ur.company_id = u.company_id AND ur.user_id = u.id
+                                ORDER BY r.id
+                            )
+                        ),
+                        ''
+                    ) AS role_names
+                FROM users u
+                WHERE u.company_id = ?
+                ORDER BY u.id
+                LIMIT ? OFFSET ?
+                """,
+                (int(company_id), int(limit), int(offset)),
+            ).fetchall()
+            items: list[UserListItem] = []
+            for user_id, company_id_v, email, is_active, verified, role_names in rows:
+                roles = [str(name) for name in str(role_names or "").split("|") if str(name).strip()]
+                items.append(
+                    UserListItem(
+                        id=int(user_id),
+                        company_id=int(company_id_v),
+                        email=str(email),
+                        is_active=bool(is_active),
+                        verified=bool(verified),
+                        roles=roles,
+                    )
+                )
+            return items
+
+    def update_user(
+        self,
+        *,
+        company_id: int,
+        user_id: int,
+        email: str | None,
+        password_hash: str | None,
+        is_active: bool | None,
+        verified: bool | None,
+    ) -> User:
+        fields: list[str] = []
+        params: list[object] = []
+        if email is not None:
+            fields.append("email = ?")
+            params.append(str(email))
+        if password_hash is not None:
+            fields.append("password_hash = ?")
+            params.append(str(password_hash))
+        if is_active is not None:
+            fields.append("is_active = ?")
+            params.append(1 if bool(is_active) else 0)
+        if verified is not None:
+            fields.append("verified = ?")
+            params.append(1 if bool(verified) else 0)
+        if not fields:
+            raise sqlite3.IntegrityError("no fields to update")
+
+        params.append(int(company_id))
+        params.append(int(user_id))
+
+        with self._connect() as conn:
+            try:
+                sql = f"UPDATE users SET {', '.join(fields)} WHERE company_id = ? AND id = ?"
+                cur = conn.execute(sql, params)
+                if int(cur.rowcount) != 1:
+                    raise sqlite3.IntegrityError("user not found")
+                conn.commit()
+            except sqlite3.IntegrityError as e:
+                conn.rollback()
+                if "users.company_id" in str(e) or "users_company_email_unique" in str(e) or "users(company_id,email)" in str(e):
+                    raise EmailAlreadyExistsError() from None
+                raise
+
+        user = self.get_user_by_id(company_id=int(company_id), user_id=int(user_id))
+        if user is None:
+            raise sqlite3.IntegrityError("user not found")
+        return user
+
+    def deactivate_user(self, *, company_id: int, user_id: int) -> str:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT is_active FROM users WHERE company_id = ? AND id = ? LIMIT 1",
+                (int(company_id), int(user_id)),
+            ).fetchone()
+            if row is None:
+                return "not_found"
+            is_active = bool(row[0])
+            if not is_active:
+                return "already_inactive"
+            cur = conn.execute(
+                "UPDATE users SET is_active = 0 WHERE company_id = ? AND id = ?",
+                (int(company_id), int(user_id)),
+            )
+            if int(cur.rowcount) != 1:
+                return "not_found"
+            conn.commit()
+            return "changed"
+
     def create_password_reset_token(
         self,
         *,
@@ -141,6 +334,25 @@ class SqliteUserRepository:
             conn.execute(
                 """
                 INSERT INTO email_verification_tokens (company_id, user_id, token_hash, expires_at, created_at, used_at)
+                VALUES (?, ?, ?, ?, ?, NULL)
+                """,
+                (company_id, user_id, str(token_hash), int(expires_at), int(created_at)),
+            )
+            conn.commit()
+
+    def create_refresh_token(
+        self,
+        *,
+        company_id: int,
+        user_id: int,
+        token_hash: str,
+        expires_at: int,
+        created_at: int,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO refresh_tokens (company_id, user_id, token_hash, expires_at, created_at, used_at)
                 VALUES (?, ?, ?, ?, ?, NULL)
                 """,
                 (company_id, user_id, str(token_hash), int(expires_at), int(created_at)),
@@ -197,6 +409,82 @@ class SqliteUserRepository:
                 (int(now), company_id, int(token_id)),
             )
             if cur_token.rowcount != 1:
+                conn.execute("ROLLBACK")
+                return "already_used", int(user_id)
+
+            conn.execute("COMMIT")
+            return "ok", int(user_id)
+
+    def consume_refresh_token(self, *, company_id: int, token_hash: str, now: int) -> tuple[str, int | None]:
+        with self._connect() as conn:
+            conn.execute("BEGIN")
+            row = conn.execute(
+                """
+                SELECT id, user_id, expires_at, used_at
+                FROM refresh_tokens
+                WHERE company_id = ? AND token_hash = ?
+                LIMIT 1
+                """,
+                (int(company_id), str(token_hash)),
+            ).fetchone()
+            if row is None:
+                conn.execute("ROLLBACK")
+                return "not_found", None
+            token_id, user_id, expires_at, used_at = row
+            if used_at is not None:
+                conn.execute("ROLLBACK")
+                return "already_used", int(user_id)
+            if int(now) > int(expires_at):
+                conn.execute("ROLLBACK")
+                return "expired", int(user_id)
+
+            cur = conn.execute(
+                """
+                UPDATE refresh_tokens
+                SET used_at = ?
+                WHERE company_id = ? AND id = ? AND used_at IS NULL
+                """,
+                (int(now), int(company_id), int(token_id)),
+            )
+            if cur.rowcount != 1:
+                conn.execute("ROLLBACK")
+                return "already_used", int(user_id)
+
+            conn.execute("COMMIT")
+            return "ok", int(user_id)
+
+    def invalidate_refresh_token(self, *, company_id: int, token_hash: str, now: int) -> tuple[str, int | None]:
+        with self._connect() as conn:
+            conn.execute("BEGIN")
+            row = conn.execute(
+                """
+                SELECT id, user_id, expires_at, used_at
+                FROM refresh_tokens
+                WHERE company_id = ? AND token_hash = ?
+                LIMIT 1
+                """,
+                (int(company_id), str(token_hash)),
+            ).fetchone()
+            if row is None:
+                conn.execute("ROLLBACK")
+                return "not_found", None
+            token_id, user_id, expires_at, used_at = row
+            if used_at is not None:
+                conn.execute("ROLLBACK")
+                return "already_used", int(user_id)
+            if int(now) > int(expires_at):
+                conn.execute("ROLLBACK")
+                return "expired", int(user_id)
+
+            cur = conn.execute(
+                """
+                UPDATE refresh_tokens
+                SET used_at = ?
+                WHERE company_id = ? AND id = ? AND used_at IS NULL
+                """,
+                (int(now), int(company_id), int(token_id)),
+            )
+            if cur.rowcount != 1:
                 conn.execute("ROLLBACK")
                 return "already_used", int(user_id)
 
@@ -1083,6 +1371,14 @@ class SqliteUserRepository:
             ).fetchone()
             return row is not None
 
+    def product_belongs_to_company(self, *, company_id: int, product_id: int) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM products WHERE company_id = ? AND id = ? LIMIT 1",
+                (int(company_id), int(product_id)),
+            ).fetchone()
+            return row is not None
+
     def company_name_exists(self, *, name: str) -> bool:
         with self._connect() as conn:
             row = conn.execute("SELECT 1 FROM companies WHERE name = ? LIMIT 1", (str(name),)).fetchone()
@@ -1578,6 +1874,93 @@ class SqliteUserRepository:
                 created_at=int(now),
             )
 
+    def register_inventory_movement(
+        self,
+        *,
+        company_id: int,
+        branch_id: int,
+        product_id: int,
+        user_id: int,
+        movement_type: str,
+        quantity: int,
+        reference: str | None,
+    ) -> tuple[InventoryItem, InventoryMovement]:
+        with self._connect() as conn:
+            now = int(time.time())
+            conn.execute("BEGIN")
+            try:
+                row = conn.execute(
+                    """
+                    SELECT quantity, min_quantity, updated_at
+                    FROM inventory_items
+                    WHERE company_id = ? AND branch_id = ? AND product_id = ?
+                    LIMIT 1
+                    """,
+                    (int(company_id), int(branch_id), int(product_id)),
+                ).fetchone()
+
+                current_quantity = int(row[0]) if row is not None else 0
+                min_quantity = int(row[1]) if row is not None else 0
+                delta = int(quantity) if str(movement_type) == "entrada" else -int(quantity)
+                new_quantity = current_quantity + delta
+
+                if new_quantity < 0:
+                    raise ValidationError("stock insuficiente")
+
+                conn.execute(
+                    """
+                    INSERT INTO inventory_items (company_id, branch_id, product_id, quantity, min_quantity, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(company_id, branch_id, product_id)
+                    DO UPDATE SET quantity = excluded.quantity, min_quantity = excluded.min_quantity, updated_at = excluded.updated_at
+                    """,
+                    (int(company_id), int(branch_id), int(product_id), int(new_quantity), int(min_quantity), int(now)),
+                )
+
+                cur = conn.execute(
+                    """
+                    INSERT INTO inventory_movements (company_id, branch_id, product_id, user_id, movement_type, quantity, reference, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        int(company_id),
+                        int(branch_id),
+                        int(product_id),
+                        int(user_id),
+                        str(movement_type),
+                        int(quantity),
+                        str(reference) if reference is not None else None,
+                        int(now),
+                    ),
+                )
+                movement_id = int(cur.lastrowid)
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+
+            return (
+                InventoryItem(
+                    company_id=int(company_id),
+                    branch_id=int(branch_id),
+                    product_id=int(product_id),
+                    quantity=int(new_quantity),
+                    min_quantity=int(min_quantity),
+                    updated_at=int(now),
+                ),
+                InventoryMovement(
+                    company_id=int(company_id),
+                    id=movement_id,
+                    branch_id=int(branch_id),
+                    product_id=int(product_id),
+                    user_id=int(user_id),
+                    movement_type=str(movement_type),
+                    quantity=int(quantity),
+                    reference=reference,
+                    created_at=int(now),
+                ),
+            )
+
     def list_inventory_movements(self, *, company_id: int, branch_id: int, limit: int) -> list[InventoryMovement]:
         with self._connect() as conn:
             rows = conn.execute(
@@ -1988,6 +2371,21 @@ class SqliteUserRepository:
                 CREATE INDEX IF NOT EXISTS evt_company_id_idx ON email_verification_tokens (company_id);
                 CREATE INDEX IF NOT EXISTS evt_user_id_idx ON email_verification_tokens (user_id);
                 CREATE INDEX IF NOT EXISTS evt_token_hash_idx ON email_verification_tokens (token_hash);
+
+                CREATE TABLE IF NOT EXISTS refresh_tokens (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  company_id INTEGER NOT NULL,
+                  user_id INTEGER NOT NULL,
+                  token_hash TEXT NOT NULL,
+                  expires_at INTEGER NOT NULL,
+                  created_at INTEGER NOT NULL,
+                  used_at INTEGER NULL,
+                  CONSTRAINT rt_company_token_unique UNIQUE (company_id, token_hash),
+                  CONSTRAINT rt_user_fk FOREIGN KEY (user_id) REFERENCES users (id)
+                );
+                CREATE INDEX IF NOT EXISTS rt_company_id_idx ON refresh_tokens (company_id);
+                CREATE INDEX IF NOT EXISTS rt_user_id_idx ON refresh_tokens (user_id);
+                CREATE INDEX IF NOT EXISTS rt_token_hash_idx ON refresh_tokens (token_hash);
 
                 CREATE TABLE IF NOT EXISTS auth_audit_logs (
                   id INTEGER PRIMARY KEY AUTOINCREMENT,
