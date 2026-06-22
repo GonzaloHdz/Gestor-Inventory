@@ -23,7 +23,14 @@ from gestor_inventory.application.create_internal_user import CreateInternalUser
 from gestor_inventory.application.set_company_default_branch import SetCompanyDefaultBranchRequest, set_company_default_branch
 from gestor_inventory.application.deactivate_branch import DeactivateBranchRequest, deactivate_branch
 from gestor_inventory.application.get_company_settings import GetCompanySettingsRequest, get_company_settings
-from gestor_inventory.application.inventory import ListInventoryRequest, list_inventory
+from gestor_inventory.application.inventory import (
+    ListInventoryMovementsRequest,
+    ListInventoryRequest,
+    RegisterInventoryMovementRequest,
+    list_inventory,
+    list_inventory_movements,
+    register_inventory_movement,
+)
 from gestor_inventory.application.list_branches import ListBranchesRequest, list_branches
 from gestor_inventory.application.list_rbac import (
     ListRolesRequest,
@@ -90,6 +97,21 @@ class HttpApiHandler(BaseHTTPRequestHandler):
     email_sender = NoopVerificationEmailSender()
     public_base_url = None
 
+    def end_headers(self):
+        origin = self.headers.get("Origin")
+        if origin == "http://127.0.0.1:5500":
+            self.send_header("Access-Control-Allow-Origin", origin)
+        else:
+            self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        super().end_headers()
+
+    def do_OPTIONS(self):
+        self.send_response(HTTPStatus.NO_CONTENT.value)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def do_GET(self):
         parsed = urlparse(self.path)
         if parsed.path == "/api/auth/me":
@@ -103,6 +125,12 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/auth/verify":
             self._handle_verify_email(parsed.query)
+            return
+        if parsed.path == "/api/inventory/movements":
+            self._handle_list_inventory_movements(parsed.query)
+            return
+        if parsed.path == "/api/products":
+            self._handle_list_products(parsed.query)
             return
         if parsed.path == "/api/auth/verify-email":
             self._handle_verify_email(parsed.query)
@@ -445,6 +473,12 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/auth/logout":
             self._handle_logout()
+            return
+        if self.path == "/api/inventory/movements":
+            self._handle_register_inventory_movement()
+            return
+        if self.path == "/api/products":
+            self._handle_create_product()
             return
         if self.path == "/api/admin/user-roles/assign":
             self._handle_assign_user_role()
@@ -1568,6 +1602,242 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                     }
                     for i in res.items
                 ]
+            },
+        )
+
+    def _handle_list_products(self) -> None:
+        try:
+            authz = self._require_permissions({"productos:leer"})
+            if authz is None:
+                return
+            company_id = int(authz.get("company_id"))
+            res = list_products(self.repo, ListProductsRequest(company_id=company_id))
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "products": [
+                    {
+                        "company_id": p.company_id,
+                        "id": p.id,
+                        "category_id": p.category_id,
+                        "sku": p.sku,
+                        "name": p.name,
+                        "description": p.description,
+                        "is_active": p.is_active,
+                    }
+                    for p in res.products
+                ]
+            },
+        )
+
+    def _handle_list_inventory_movements(self, query: str) -> None:
+        try:
+            authz = self._require_permissions({"movimientos:leer"})
+            if authz is None:
+                return
+            company_id = int(authz.get("company_id"))
+            params = parse_qs(query, keep_blank_values=True)
+            branch_id_raw = (params.get("branch_id") or [None])[0]
+            limit_raw = (params.get("limit") or [50])[0]
+            res = list_inventory_movements(
+                self.repo,
+                ListInventoryMovementsRequest(
+                    company_id=company_id,
+                    branch_id=int(branch_id_raw),
+                    limit=int(limit_raw),
+                ),
+            )
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except NotFoundError:
+            self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            return
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "movements": [
+                    {
+                        "company_id": m.company_id,
+                        "id": m.id,
+                        "branch_id": m.branch_id,
+                        "product_id": m.product_id,
+                        "user_id": m.user_id,
+                        "movement_type": m.movement_type,
+                        "quantity": m.quantity,
+                        "reference": m.reference,
+                        "created_at": m.created_at,
+                    }
+                    for m in res.movements
+                ]
+            },
+        )
+
+    def _handle_register_inventory_movement(self) -> None:
+        try:
+            payload = self._read_json()
+            authz = self._require_permissions({"movimientos:crear"})
+            if authz is None:
+                return
+            company_id = int(authz.get("company_id"))
+            user_id = int(authz.get("sub"))
+            res = register_inventory_movement(
+                self.repo,
+                RegisterInventoryMovementRequest(
+                    company_id=company_id,
+                    branch_id=int(payload["branch_id"]),
+                    product_id=int(payload["product_id"]),
+                    user_id=user_id,
+                    movement_type=payload["movement_type"],
+                    quantity=int(payload["quantity"]),
+                    reference=payload.get("reference"),
+                ),
+            )
+        except KeyError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except NotFoundError as e:
+            self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found", "message": str(e)})
+            return
+        except ValidationError as e:
+            message = str(e)
+            if "stock insuficiente" in message.lower():
+                self._send_json(
+                    HTTPStatus.CONFLICT,
+                    {"error": "negative_stock_rejected", "message": "No hay suficiente stock disponible. Operacion rechazada."},
+                )
+                return
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": message})
+            return
+        except json.JSONDecodeError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        item = res.item
+        movement = res.movement
+        self._audit_data(
+            authz,
+            action="CREATE",
+            resource="movimientos",
+            details=json.dumps(
+                {
+                    "branch_id": movement.branch_id,
+                    "product_id": movement.product_id,
+                    "movement_type": movement.movement_type,
+                    "quantity": movement.quantity,
+                    "result_quantity": item.quantity,
+                },
+                separators=(",", ":"),
+            ),
+        )
+        self._send_json(
+            HTTPStatus.CREATED,
+            {
+                "item": {
+                    "company_id": item.company_id,
+                    "branch_id": item.branch_id,
+                    "product_id": item.product_id,
+                    "quantity": item.quantity,
+                    "min_quantity": item.min_quantity,
+                    "updated_at": item.updated_at,
+                },
+                "movement": {
+                    "company_id": movement.company_id,
+                    "id": movement.id,
+                    "branch_id": movement.branch_id,
+                    "product_id": movement.product_id,
+                    "user_id": movement.user_id,
+                    "movement_type": movement.movement_type,
+                    "quantity": movement.quantity,
+                    "reference": movement.reference,
+                    "created_at": movement.created_at,
+                },
+            },
+        )
+
+    def _handle_create_product(self) -> None:
+        try:
+            payload = self._read_json()
+            payload_company_id = payload.get("company_id")
+            authz = self._require_permissions(
+                {"productos:crear"},
+                company_id=(int(payload_company_id) if payload_company_id is not None else None),
+            )
+            if authz is None:
+                return
+            company_id = int(authz.get("company_id"))
+            category_id_raw = payload.get("category_id")
+            res = create_product(
+                self.repo,
+                CreateProductRequest(
+                    company_id=company_id,
+                    category_id=(int(category_id_raw) if category_id_raw is not None else None),
+                    sku=payload["sku"],
+                    name=payload["name"],
+                    description=payload.get("description"),
+                ),
+            )
+        except KeyError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except ValidationError as e:
+            status = HTTPStatus.CONFLICT if "sku" in str(e).lower() and "existe" in str(e).lower() else HTTPStatus.BAD_REQUEST
+            error = "sku_already_exists" if status == HTTPStatus.CONFLICT else "validation_error"
+            payload = {"error": error, "message": str(e)}
+            self._send_json(status, payload)
+            return
+        except json.JSONDecodeError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        p = res.product
+        self._audit_data(
+            authz,
+            action="CREATE",
+            resource="productos",
+            details=json.dumps({"product_id": p.id, "sku": p.sku, "name": p.name}, separators=(",", ":")),
+        )
+        self._send_json(
+            HTTPStatus.CREATED,
+            {
+                "product": {
+                    "company_id": p.company_id,
+                    "id": p.id,
+                    "category_id": p.category_id,
+                    "sku": p.sku,
+                    "name": p.name,
+                    "description": p.description,
+                    "is_active": p.is_active,
+                }
             },
         )
 
