@@ -3,6 +3,7 @@ from contextlib import contextmanager
 import time
 import unicodedata
 
+from gestor_inventory.application.list_users import UserListItem
 from gestor_inventory.domain.errors import EmailAlreadyExistsError
 from gestor_inventory.domain.company import Company
 from gestor_inventory.domain.company_setting import CompanySetting
@@ -152,6 +153,154 @@ class SqliteUserRepository:
                 "is_active": bool(is_active),
                 "verified": bool(verified),
             }
+
+    def get_user_by_id(self, *, company_id: int, user_id: int) -> User | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, company_id, email, password_hash, is_active, verified
+                FROM users
+                WHERE company_id = ? AND id = ?
+                LIMIT 1
+                """,
+                (int(company_id), int(user_id)),
+            ).fetchone()
+            if row is None:
+                return None
+            user_id_v, company_id_v, email_v, password_hash, is_active, verified = row
+            return User(
+                id=int(user_id_v),
+                company_id=int(company_id_v),
+                email=str(email_v),
+                password_hash=str(password_hash),
+                is_active=bool(is_active),
+                verified=bool(verified),
+            )
+
+    def count_users_by_company(self, *, company_id: int) -> int:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM users
+                WHERE company_id = ?
+                """,
+                (int(company_id),),
+            ).fetchone()
+            return 0 if row is None else int(row[0])
+
+    def list_users_by_company(self, *, company_id: int, limit: int, offset: int) -> list[UserListItem]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    u.id,
+                    u.company_id,
+                    u.email,
+                    u.is_active,
+                    u.verified,
+                    COALESCE(
+                        (
+                            SELECT GROUP_CONCAT(role_name, '|')
+                            FROM (
+                                SELECT r.name AS role_name
+                                FROM user_roles ur
+                                JOIN roles r ON r.company_id = ur.company_id AND r.id = ur.role_id
+                                WHERE ur.company_id = u.company_id AND ur.user_id = u.id
+                                ORDER BY r.id
+                            )
+                        ),
+                        ''
+                    ) AS role_names
+                FROM users u
+                WHERE u.company_id = ?
+                ORDER BY u.id
+                LIMIT ? OFFSET ?
+                """,
+                (int(company_id), int(limit), int(offset)),
+            ).fetchall()
+            items: list[UserListItem] = []
+            for user_id, company_id_v, email, is_active, verified, role_names in rows:
+                roles = [str(name) for name in str(role_names or "").split("|") if str(name).strip()]
+                items.append(
+                    UserListItem(
+                        id=int(user_id),
+                        company_id=int(company_id_v),
+                        email=str(email),
+                        is_active=bool(is_active),
+                        verified=bool(verified),
+                        roles=roles,
+                    )
+                )
+            return items
+
+    def update_user(
+        self,
+        *,
+        company_id: int,
+        user_id: int,
+        email: str | None,
+        password_hash: str | None,
+        is_active: bool | None,
+        verified: bool | None,
+    ) -> User:
+        fields: list[str] = []
+        params: list[object] = []
+        if email is not None:
+            fields.append("email = ?")
+            params.append(str(email))
+        if password_hash is not None:
+            fields.append("password_hash = ?")
+            params.append(str(password_hash))
+        if is_active is not None:
+            fields.append("is_active = ?")
+            params.append(1 if bool(is_active) else 0)
+        if verified is not None:
+            fields.append("verified = ?")
+            params.append(1 if bool(verified) else 0)
+        if not fields:
+            raise sqlite3.IntegrityError("no fields to update")
+
+        params.append(int(company_id))
+        params.append(int(user_id))
+
+        with self._connect() as conn:
+            try:
+                sql = f"UPDATE users SET {', '.join(fields)} WHERE company_id = ? AND id = ?"
+                cur = conn.execute(sql, params)
+                if int(cur.rowcount) != 1:
+                    raise sqlite3.IntegrityError("user not found")
+                conn.commit()
+            except sqlite3.IntegrityError as e:
+                conn.rollback()
+                if "users.company_id" in str(e) or "users_company_email_unique" in str(e) or "users(company_id,email)" in str(e):
+                    raise EmailAlreadyExistsError() from None
+                raise
+
+        user = self.get_user_by_id(company_id=int(company_id), user_id=int(user_id))
+        if user is None:
+            raise sqlite3.IntegrityError("user not found")
+        return user
+
+    def deactivate_user(self, *, company_id: int, user_id: int) -> str:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT is_active FROM users WHERE company_id = ? AND id = ? LIMIT 1",
+                (int(company_id), int(user_id)),
+            ).fetchone()
+            if row is None:
+                return "not_found"
+            is_active = bool(row[0])
+            if not is_active:
+                return "already_inactive"
+            cur = conn.execute(
+                "UPDATE users SET is_active = 0 WHERE company_id = ? AND id = ?",
+                (int(company_id), int(user_id)),
+            )
+            if int(cur.rowcount) != 1:
+                return "not_found"
+            conn.commit()
+            return "changed"
 
     def create_password_reset_token(
         self,

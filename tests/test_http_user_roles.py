@@ -101,6 +101,47 @@ class HttpUserRolesTests(unittest.TestCase):
         finally:
             conn.close()
 
+    def _put(self, path: str, body: dict, token: str | None = None) -> tuple[int, dict]:
+        conn = http.client.HTTPConnection(self.base[0], self.base[1], timeout=2)
+        try:
+            headers = {"Content-Type": "application/json"}
+            if token is not None:
+                headers["Authorization"] = f"Bearer {token}"
+            raw = json.dumps(body).encode("utf-8")
+            conn.request("PUT", path, body=raw, headers=headers)
+            resp = conn.getresponse()
+            data = resp.read()
+            return resp.status, ({} if not data else json.loads(data.decode("utf-8")))
+        finally:
+            conn.close()
+
+    def _patch(self, path: str, body: dict, token: str | None = None) -> tuple[int, dict]:
+        conn = http.client.HTTPConnection(self.base[0], self.base[1], timeout=2)
+        try:
+            headers = {"Content-Type": "application/json"}
+            if token is not None:
+                headers["Authorization"] = f"Bearer {token}"
+            raw = json.dumps(body).encode("utf-8")
+            conn.request("PATCH", path, body=raw, headers=headers)
+            resp = conn.getresponse()
+            data = resp.read()
+            return resp.status, ({} if not data else json.loads(data.decode("utf-8")))
+        finally:
+            conn.close()
+
+    def _delete(self, path: str, token: str | None = None) -> tuple[int, dict]:
+        conn = http.client.HTTPConnection(self.base[0], self.base[1], timeout=2)
+        try:
+            headers = {}
+            if token is not None:
+                headers["Authorization"] = f"Bearer {token}"
+            conn.request("DELETE", path, headers=headers)
+            resp = conn.getresponse()
+            data = resp.read()
+            return resp.status, ({} if not data else json.loads(data.decode("utf-8")))
+        finally:
+            conn.close()
+
     def _token_for(self, *, user_id: int, company_id: int, email: str) -> str:
         return create_jwt_hs256(
             {"sub": str(user_id), "company_id": int(company_id), "email": str(email)},
@@ -298,6 +339,162 @@ class HttpUserRolesTests(unittest.TestCase):
         status, body = self._get("/api/admin/roles", token=token)
         self.assertEqual(status, 403)
         self.assertEqual(body.get("error"), "forbidden")
+
+    def test_list_users_requires_auth(self):
+        status, body = self._get("/api/users", token=None)
+        self.assertEqual(status, 401)
+        self.assertEqual(body.get("error"), "unauthorized")
+
+    def test_list_users_requires_permission(self):
+        token = self._token_for(user_id=self.normal_user.id, company_id=1, email=self.normal_user.email)
+        status, body = self._get("/api/users", token=token)
+        self.assertEqual(status, 403)
+        self.assertEqual(body.get("error"), "forbidden")
+
+    def test_list_users_scoped_by_token_company(self):
+        token = self._token_for(user_id=self.admin_user.id, company_id=1, email=self.admin_user.email)
+        status, body = self._get("/api/users?page=1&per_page=10", token=token)
+        self.assertEqual(status, 200)
+        data = body.get("data")
+        self.assertIsInstance(data, list)
+        self.assertTrue(all(item.get("company_id") == 1 for item in data))
+        emails = {item.get("email") for item in data}
+        self.assertIn("admin@example.com", emails)
+        self.assertIn("user@example.com", emails)
+        self.assertIn("superadmin@example.com", emails)
+        self.assertNotIn("other@example.com", emails)
+        self.assertTrue(any("Administrador" in item.get("roles", []) for item in data if item.get("email") == "admin@example.com"))
+
+    def test_list_users_paginates(self):
+        token = self._token_for(user_id=self.admin_user.id, company_id=1, email=self.admin_user.email)
+        for idx in range(3):
+            self.repo.create_user_with_role(
+                company_id=1,
+                email=f"extra{idx}@example.com",
+                password_hash=hash_password("Strong1!"),
+                role_id=10,
+            )
+
+        status, body = self._get("/api/users?page=1&per_page=2", token=token)
+        self.assertEqual(status, 200)
+        self.assertEqual(len(body.get("data", [])), 2)
+        pagination = body.get("pagination", {})
+        self.assertEqual(pagination.get("page"), 1)
+        self.assertEqual(pagination.get("per_page"), 2)
+        self.assertGreaterEqual(pagination.get("total"), 6)
+        self.assertGreaterEqual(pagination.get("pages"), 3)
+
+    def test_get_user_by_id_requires_permission_and_is_tenant_scoped(self):
+        token_user = self._token_for(user_id=self.normal_user.id, company_id=1, email=self.normal_user.email)
+        status_forbidden, body_forbidden = self._get(f"/api/users/{self.normal_user.id}", token=token_user)
+        self.assertEqual(status_forbidden, 403)
+        self.assertEqual(body_forbidden.get("error"), "forbidden")
+
+        token_admin = self._token_for(user_id=self.admin_user.id, company_id=1, email=self.admin_user.email)
+        status_ok, body_ok = self._get(f"/api/users/{self.normal_user.id}", token=token_admin)
+        self.assertEqual(status_ok, 200)
+        user = body_ok.get("user", {})
+        self.assertEqual(user.get("id"), self.normal_user.id)
+        self.assertEqual(user.get("company_id"), 1)
+        self.assertEqual(user.get("email"), "user@example.com")
+        self.assertIn("Almacenista", user.get("roles", []))
+
+        status_missing, body_missing = self._get(f"/api/users/{self.other_company_user.id}", token=token_admin)
+        self.assertEqual(status_missing, 404)
+        self.assertEqual(body_missing.get("error"), "not_found")
+
+    def test_create_internal_user_supported_on_api_users(self):
+        token = self._token_for(user_id=self.admin_user.id, company_id=1, email=self.admin_user.email)
+        status, body = self._post(
+            "/api/users",
+            {"email": "crud-create@example.com", "password": "Secret1!", "role_id": 10},
+            token=token,
+        )
+        self.assertEqual(status, 201)
+        user = body.get("user", {})
+        self.assertEqual(user.get("company_id"), 1)
+        self.assertEqual(user.get("email"), "crud-create@example.com")
+        self.assertEqual(user.get("role_id"), 10)
+
+    def test_update_user_edits_controlled_fields(self):
+        token = self._token_for(user_id=self.admin_user.id, company_id=1, email=self.admin_user.email)
+        before = self.repo.get_user_by_id(company_id=1, user_id=self.normal_user.id)
+        self.assertIsNotNone(before)
+
+        status, body = self._patch(
+            f"/api/users/{self.normal_user.id}",
+            {
+                "email": "updated-user@example.com",
+                "password": "NewSecret1!",
+                "is_active": False,
+                "verified": True,
+            },
+            token=token,
+        )
+        self.assertEqual(status, 200)
+        user = body.get("user", {})
+        self.assertEqual(user.get("id"), self.normal_user.id)
+        self.assertEqual(user.get("company_id"), 1)
+        self.assertEqual(user.get("email"), "updated-user@example.com")
+        self.assertEqual(user.get("is_active"), False)
+        self.assertEqual(user.get("verified"), True)
+
+        after = self.repo.get_user_by_id(company_id=1, user_id=self.normal_user.id)
+        self.assertIsNotNone(after)
+        self.assertEqual(after.email, "updated-user@example.com")
+        self.assertFalse(after.is_active)
+        self.assertTrue(after.verified)
+        self.assertNotEqual(after.password_hash, before.password_hash)
+
+    def test_update_user_rejects_immutable_fields_and_cross_tenant_target(self):
+        token = self._token_for(user_id=self.admin_user.id, company_id=1, email=self.admin_user.email)
+
+        status_bad, body_bad = self._put(
+            f"/api/users/{self.normal_user.id}",
+            {"company_id": 2, "email": "should-fail@example.com"},
+            token=token,
+        )
+        self.assertEqual(status_bad, 400)
+        self.assertEqual(body_bad.get("error"), "validation_error")
+
+        status_missing, body_missing = self._patch(
+            f"/api/users/{self.other_company_user.id}",
+            {"email": "should-not-work@example.com"},
+            token=token,
+        )
+        self.assertEqual(status_missing, 404)
+        self.assertEqual(body_missing.get("error"), "not_found")
+
+    def test_delete_user_soft_deactivates_and_rejects_self_delete(self):
+        token = self._token_for(user_id=self.admin_user.id, company_id=1, email=self.admin_user.email)
+
+        status, body = self._delete(f"/api/users/{self.normal_user.id}", token=token)
+        self.assertEqual(status, 200)
+        self.assertEqual(body.get("status"), "ok")
+        self.assertEqual(body.get("changed"), True)
+
+        deactivated = self.repo.get_user_by_id(company_id=1, user_id=self.normal_user.id)
+        self.assertIsNotNone(deactivated)
+        self.assertFalse(deactivated.is_active)
+
+        status_self, body_self = self._delete(f"/api/users/{self.admin_user.id}", token=token)
+        self.assertEqual(status_self, 403)
+        self.assertEqual(body_self.get("error"), "forbidden")
+
+    def test_admin_cannot_update_or_delete_superadmin(self):
+        token = self._token_for(user_id=self.admin_user.id, company_id=1, email=self.admin_user.email)
+
+        status_update, body_update = self._patch(
+            f"/api/users/{self.superadmin_user.id}",
+            {"verified": True},
+            token=token,
+        )
+        self.assertEqual(status_update, 403)
+        self.assertEqual(body_update.get("error"), "forbidden")
+
+        status_delete, body_delete = self._delete(f"/api/users/{self.superadmin_user.id}", token=token)
+        self.assertEqual(status_delete, 403)
+        self.assertEqual(body_delete.get("error"), "forbidden")
 
     def test_list_roles_scoped_by_token_company(self):
         token = self._token_for(user_id=self.admin_user.id, company_id=1, email=self.admin_user.email)

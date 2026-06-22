@@ -30,6 +30,15 @@ from gestor_inventory.application.list_rbac import (
     list_permissions,
     list_roles,
 )
+from gestor_inventory.application.list_users import ListUsersRequest, list_users
+from gestor_inventory.application.manage_users import (
+    DeleteUserRequest,
+    delete_user,
+    GetUserRequest,
+    get_user,
+    UpdateUserRequest,
+    update_user,
+)
 from gestor_inventory.application.list_categories import ListCategoriesRequest, list_categories
 from gestor_inventory.application.list_products import ListProductsRequest, list_products
 from gestor_inventory.application.create_product import CreateProductRequest, create_product
@@ -85,6 +94,12 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == "/api/auth/me":
             self._handle_me()
+            return
+        if parsed.path == "/api/users":
+            self._handle_list_users(parsed.query)
+            return
+        if parsed.path.startswith("/api/users/"):
+            self._handle_get_user(parsed.path)
             return
         if parsed.path == "/api/auth/verify":
             self._handle_verify_email(parsed.query)
@@ -416,6 +431,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         if self.path == "/api/users/register":
             self._handle_register()
             return
+        if self.path == "/api/users":
+            self._handle_create_internal_user()
+            return
         if self.path == "/api/auth/login":
             self._handle_login()
             return
@@ -467,6 +485,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
 
     def do_PUT(self):
+        if self.path.startswith("/api/users/"):
+            self._handle_update_user(self.path)
+            return
         if self.path == "/api/admin/settings":
             self._handle_update_company_settings()
             return
@@ -485,6 +506,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
 
     def do_DELETE(self):
+        if self.path.startswith("/api/users/"):
+            self._handle_delete_user(self.path)
+            return
         if self.path.startswith("/api/admin/branches/"):
             self._handle_deactivate_branch(self.path)
             return
@@ -497,6 +521,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
 
     def do_PATCH(self):
+        if self.path.startswith("/api/users/"):
+            self._handle_update_user(self.path)
+            return
         if self.path == "/api/admin/companies/default-branch":
             self._handle_set_company_default_branch()
             return
@@ -755,6 +782,94 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 "verification_email_sent": email_sent,
             },
         )
+
+    def _handle_update_user(self, path: str) -> None:
+        try:
+            authz = self._require_permissions({"usuarios:editar"})
+            if authz is None:
+                return
+            company_id = int(authz.get("company_id"))
+            actor_user_id = int(authz.get("sub"))
+            user_id = self._parse_user_id_from_path(path)
+            payload = self._read_json()
+            self._assert_mutable_user_payload(payload)
+            res = update_user(
+                self.repo,
+                UpdateUserRequest(
+                    company_id=company_id,
+                    actor_user_id=actor_user_id,
+                    user_id=user_id,
+                    email=payload.get("email"),
+                    password=payload.get("password"),
+                    is_active=payload.get("is_active"),
+                    verified=payload.get("verified"),
+                ),
+            )
+        except NotFoundError:
+            self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            return
+        except ForbiddenError as e:
+            self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": str(e) or "Prohibido"})
+            return
+        except EmailAlreadyExistsError:
+            self._send_json(HTTPStatus.CONFLICT, {"error": "email_already_exists"})
+            return
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except json.JSONDecodeError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._audit_data(
+            authz,
+            action="UPDATE",
+            resource="usuarios",
+            details=json.dumps({"user_id": res.user.id}, separators=(",", ":")),
+        )
+        self._send_json(HTTPStatus.OK, {"user": self._serialize_user(res.user)})
+
+    def _handle_delete_user(self, path: str) -> None:
+        try:
+            authz = self._require_permissions({"usuarios:eliminar"})
+            if authz is None:
+                return
+            company_id = int(authz.get("company_id"))
+            actor_user_id = int(authz.get("sub"))
+            user_id = self._parse_user_id_from_path(path)
+            res = delete_user(
+                self.repo,
+                DeleteUserRequest(company_id=company_id, actor_user_id=actor_user_id, user_id=user_id),
+            )
+        except NotFoundError:
+            self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            return
+        except ForbiddenError as e:
+            self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": str(e) or "Prohibido"})
+            return
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._audit_data(
+            authz,
+            action="DELETE",
+            resource="usuarios",
+            details=json.dumps({"user_id": int(user_id), "changed": bool(res.changed)}, separators=(",", ":")),
+        )
+        self._send_json(HTTPStatus.OK, {"status": "ok", "changed": res.changed})
 
     def _handle_update_branch(self, path: str) -> None:
         try:
@@ -1250,6 +1365,90 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 "exp": payload.get("exp"),
             },
         )
+
+    def _handle_list_users(self, query: str) -> None:
+        try:
+            authz = self._require_permissions({"usuarios:listar"})
+            if authz is None:
+                return
+            company_id = int(authz.get("company_id"))
+            params = parse_qs(query, keep_blank_values=True)
+            page = int((params.get("page") or ["1"])[0])
+            per_page = int((params.get("per_page") or ["20"])[0])
+            res = list_users(
+                self.repo,
+                ListUsersRequest(company_id=company_id, page=page, per_page=per_page),
+            )
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._audit_data(
+            authz,
+            action="READ",
+            resource="usuarios",
+            details=json.dumps(
+                {"returned": len(res.users), "page": res.page, "per_page": res.per_page},
+                separators=(",", ":"),
+            ),
+        )
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "data": [
+                    {
+                        "id": u.id,
+                        "company_id": u.company_id,
+                        "email": u.email,
+                        "is_active": u.is_active,
+                        "verified": u.verified,
+                        "roles": u.roles,
+                    }
+                    for u in res.users
+                ],
+                "pagination": {
+                    "total": res.total,
+                    "page": res.page,
+                    "per_page": res.per_page,
+                    "pages": res.pages,
+                },
+            },
+        )
+
+    def _handle_get_user(self, path: str) -> None:
+        try:
+            authz = self._require_permissions({"usuarios:listar"})
+            if authz is None:
+                return
+            company_id = int(authz.get("company_id"))
+            user_id = self._parse_user_id_from_path(path)
+            res = get_user(self.repo, GetUserRequest(company_id=company_id, user_id=user_id))
+        except NotFoundError:
+            self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            return
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._audit_data(
+            authz,
+            action="READ",
+            resource="usuarios",
+            details=json.dumps({"user_id": res.user.id}, separators=(",", ":")),
+        )
+        self._send_json(HTTPStatus.OK, {"user": self._serialize_user(res.user)})
 
     def _handle_verify_email(self, query: str) -> None:
         try:
@@ -1877,6 +2076,27 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         raw = self.rfile.read(length) if length > 0 else b""
         return json.loads(raw.decode("utf-8"))
+
+    def _parse_user_id_from_path(self, path: str) -> int:
+        raw_id = path.removeprefix("/api/users/").strip("/")
+        if not raw_id:
+            raise ValueError("missing user id")
+        return int(raw_id)
+
+    def _assert_mutable_user_payload(self, payload: dict) -> None:
+        for field in ("id", "company_id", "role_id", "roles"):
+            if field in payload:
+                raise ValidationError(f"{field} es inmutable")
+
+    def _serialize_user(self, user) -> dict:
+        return {
+            "id": user.id,
+            "company_id": user.company_id,
+            "email": user.email,
+            "is_active": user.is_active,
+            "verified": user.verified,
+            "roles": user.roles,
+        }
 
     def _resolve_base_url(self) -> str:
         configured = self.public_base_url
