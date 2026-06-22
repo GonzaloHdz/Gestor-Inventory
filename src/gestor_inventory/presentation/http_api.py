@@ -18,6 +18,12 @@ from gestor_inventory.application.deactivate_branch import DeactivateBranchReque
 from gestor_inventory.application.get_company_settings import GetCompanySettingsRequest, get_company_settings
 from gestor_inventory.application.inventory import ListInventoryRequest, list_inventory
 from gestor_inventory.application.list_branches import ListBranchesRequest, list_branches
+from gestor_inventory.application.sat.list_sat_catalogs import (
+    ListSatCatalogRequest,
+    list_sat_productos_use_case,
+    list_sat_regimenes_use_case,
+    list_sat_unidades_use_case,
+)
 from gestor_inventory.application.list_rbac import (
     ListRolesRequest,
     list_permissions,
@@ -101,6 +107,15 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/admin/permissions":
             self._handle_list_permissions()
+            return
+        if parsed.path == "/api/sat/regimenes":
+            self._handle_list_sat_regimenes(parsed.query)
+            return
+        if parsed.path == "/api/sat/unidades":
+            self._handle_list_sat_unidades(parsed.query)
+            return
+        if parsed.path == "/api/sat/productos":
+            self._handle_list_sat_productos(parsed.query)
             return
         if parsed.path.startswith("/api/admin/categories/"):
             self._handle_get_category(parsed.path)
@@ -1145,6 +1160,106 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             },
         )
 
+    def _handle_list_sat_regimenes(self, query: str) -> None:
+        try:
+            authz = self._require_permissions({"productos:leer"})
+            if authz is None:
+                return
+            req = self._parse_sat_catalog_request(query)
+            res = list_sat_regimenes_use_case(self.repo, req)
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._audit_data(
+            authz,
+            action="READ",
+            resource="sat_regimenes",
+            details=json.dumps({"returned": len(res.items), "page": res.page, "per_page": res.per_page}, separators=(",", ":")),
+        )
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "data": [{"clave": r.clave, "descripcion": r.descripcion} for r in res.items],
+                "meta": {"total": res.total, "page": res.page, "per_page": res.per_page, "pages": res.pages},
+            },
+        )
+
+    def _handle_list_sat_unidades(self, query: str) -> None:
+        try:
+            authz = self._require_permissions({"productos:leer"})
+            if authz is None:
+                return
+            req = self._parse_sat_catalog_request(query)
+            res = list_sat_unidades_use_case(self.repo, req)
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._audit_data(
+            authz,
+            action="READ",
+            resource="sat_unidades",
+            details=json.dumps({"returned": len(res.items), "page": res.page, "per_page": res.per_page}, separators=(",", ":")),
+        )
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "data": [{"clave": u.clave, "nombre": u.nombre, "simbolo": u.simbolo} for u in res.items],
+                "meta": {"total": res.total, "page": res.page, "per_page": res.per_page, "pages": res.pages},
+            },
+        )
+
+    def _handle_list_sat_productos(self, query: str) -> None:
+        try:
+            authz = self._require_permissions({"productos:leer"})
+            if authz is None:
+                return
+            req = self._parse_sat_catalog_request(query)
+            res = list_sat_productos_use_case(self.repo, req)
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._audit_data(
+            authz,
+            action="READ",
+            resource="sat_productos",
+            details=json.dumps({"returned": len(res.items), "page": res.page, "per_page": res.per_page}, separators=(",", ":")),
+        )
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "data": [
+                    {
+                        "clave": p.clave,
+                        "descripcion": p.descripcion,
+                        "palabras_similares": p.palabras_similares,
+                    }
+                    for p in res.items
+                ],
+                "meta": {"total": res.total, "page": res.page, "per_page": res.per_page, "pages": res.pages},
+            },
+        )
+
     def _handle_get_category(self, path: str) -> None:
         try:
             authz = self._require_permissions({"productos:leer"})
@@ -1172,6 +1287,13 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             HTTPStatus.OK,
             {"category": {"company_id": c.company_id, "id": c.id, "name": c.name, "is_active": c.is_active}},
         )
+
+    def _parse_sat_catalog_request(self, query: str) -> ListSatCatalogRequest:
+        params = parse_qs(query, keep_blank_values=True)
+        search = (params.get("search") or params.get("q") or [None])[0]
+        page_raw = (params.get("page") or ["1"])[0]
+        per_page_raw = (params.get("per_page") or ["50"])[0]
+        return ListSatCatalogRequest(search=search, page=int(page_raw), per_page=int(per_page_raw))
 
     def _handle_create_category(self) -> None:
         try:

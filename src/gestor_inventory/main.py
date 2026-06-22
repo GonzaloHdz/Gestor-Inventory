@@ -2,7 +2,7 @@ import os
 import secrets
 from http.server import ThreadingHTTPServer
 
-from gestor_inventory.infrastructure.sqlite_user_repository import SqliteUserRepository
+from gestor_inventory.infrastructure.sqlite_sat_repository import SqliteSatRepository
 from gestor_inventory.presentation.http_api import HttpApiHandler
 
 
@@ -18,7 +18,7 @@ def main() -> None:
     if jwt_expiration_minutes <= 0:
         jwt_expiration_minutes = 60
 
-    repo = SqliteUserRepository(db_path=db_path)
+    repo = SqliteSatRepository(db_path=db_path)
     HttpApiHandler.repo = repo
     HttpApiHandler.jwt_secret = jwt_secret
     HttpApiHandler.jwt_expiration_minutes = jwt_expiration_minutes
