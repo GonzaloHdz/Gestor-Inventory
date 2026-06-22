@@ -5,6 +5,12 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 
 from gestor_inventory.application.login_user import LoginRequest, login_user
+from gestor_inventory.application.logout_user import LogoutRequest, logout_user
+from gestor_inventory.application.refresh_access_token import RefreshAccessTokenRequest, refresh_access_token
+from gestor_inventory.application.resend_verification_email import (
+    ResendVerificationEmailRequest,
+    resend_verification_email,
+)
 from gestor_inventory.application.categories import (
     CreateCategoryRequest,
     GetCategoryRequest,
@@ -13,10 +19,18 @@ from gestor_inventory.application.categories import (
 )
 from gestor_inventory.application.branches import CreateBranchRequest, create_branch
 from gestor_inventory.application.create_company import CreateCompanyRequest, create_company
+from gestor_inventory.application.create_internal_user import CreateInternalUserRequest, create_internal_user
 from gestor_inventory.application.set_company_default_branch import SetCompanyDefaultBranchRequest, set_company_default_branch
 from gestor_inventory.application.deactivate_branch import DeactivateBranchRequest, deactivate_branch
 from gestor_inventory.application.get_company_settings import GetCompanySettingsRequest, get_company_settings
-from gestor_inventory.application.inventory import ListInventoryRequest, list_inventory
+from gestor_inventory.application.inventory import (
+    ListInventoryMovementsRequest,
+    ListInventoryRequest,
+    RegisterInventoryMovementRequest,
+    list_inventory,
+    list_inventory_movements,
+    register_inventory_movement,
+)
 from gestor_inventory.application.list_branches import ListBranchesRequest, list_branches
 from gestor_inventory.application.sat.list_sat_catalogs import (
     ListSatCatalogRequest,
@@ -28,6 +42,15 @@ from gestor_inventory.application.list_rbac import (
     ListRolesRequest,
     list_permissions,
     list_roles,
+)
+from gestor_inventory.application.list_users import ListUsersRequest, list_users
+from gestor_inventory.application.manage_users import (
+    DeleteUserRequest,
+    delete_user,
+    GetUserRequest,
+    get_user,
+    UpdateUserRequest,
+    update_user,
 )
 from gestor_inventory.application.list_categories import ListCategoriesRequest, list_categories
 from gestor_inventory.application.list_products import ListProductsRequest, list_products
@@ -52,19 +75,23 @@ from gestor_inventory.application.update_company_setting import UpdateCompanySet
 from gestor_inventory.application.update_product import UpdateProductRequest, update_product
 from gestor_inventory.application.verify_email import VerifyEmailRequest, verify_email
 from gestor_inventory.domain.errors import (
+    AccountNotVerifiedError,
     BranchHasInventoryError,
     CompanyNameAlreadyExistsError,
     DuplicateBarcodeError,
     DuplicateSKUError,
     EmailAlreadyExistsError,
+    ForbiddenError,
     InvalidCategoryError,
     InvalidSupplierError,
     InvalidCredentialsError,
     NotFoundError,
     PasswordResetTokenExpiredError,
     PasswordResetTokenInvalidError,
+    RefreshTokenInvalidError,
     ValidationError,
 )
+from gestor_inventory.infrastructure.resend_email_sender import EmailDeliveryError, NoopVerificationEmailSender
 from gestor_inventory.security.jwt import verify_jwt_hs256
 
 
@@ -72,11 +99,44 @@ class HttpApiHandler(BaseHTTPRequestHandler):
     repo = None
     jwt_secret = None
     jwt_expiration_minutes = 60
+    refresh_token_expiration_minutes = 10080
+    email_sender = NoopVerificationEmailSender()
+    public_base_url = None
+
+    def end_headers(self):
+        origin = self.headers.get("Origin")
+        if origin == "http://127.0.0.1:5500":
+            self.send_header("Access-Control-Allow-Origin", origin)
+        else:
+            self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        super().end_headers()
+
+    def do_OPTIONS(self):
+        self.send_response(HTTPStatus.NO_CONTENT.value)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def do_GET(self):
         parsed = urlparse(self.path)
         if parsed.path == "/api/auth/me":
             self._handle_me()
+            return
+        if parsed.path == "/api/users":
+            self._handle_list_users(parsed.query)
+            return
+        if parsed.path.startswith("/api/users/"):
+            self._handle_get_user(parsed.path)
+            return
+        if parsed.path == "/api/auth/verify":
+            self._handle_verify_email(parsed.query)
+            return
+        if parsed.path == "/api/inventory/movements":
+            self._handle_list_inventory_movements(parsed.query)
+            return
+        if parsed.path == "/api/products":
+            self._handle_list_products(parsed.query)
             return
         if parsed.path == "/api/auth/verify-email":
             self._handle_verify_email(parsed.query)
@@ -414,8 +474,26 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         if self.path == "/api/users/register":
             self._handle_register()
             return
+        if self.path == "/api/users":
+            self._handle_create_internal_user()
+            return
         if self.path == "/api/auth/login":
             self._handle_login()
+            return
+        if self.path == "/api/auth/resend-verification":
+            self._handle_resend_verification()
+            return
+        if self.path == "/api/auth/refresh":
+            self._handle_refresh()
+            return
+        if self.path == "/api/auth/logout":
+            self._handle_logout()
+            return
+        if self.path == "/api/inventory/movements":
+            self._handle_register_inventory_movement()
+            return
+        if self.path == "/api/products":
+            self._handle_create_product()
             return
         if self.path == "/api/admin/user-roles/assign":
             self._handle_assign_user_role()
@@ -428,6 +506,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/admin/branches":
             self._handle_create_branch()
+            return
+        if self.path == "/api/admin/users":
+            self._handle_create_internal_user()
             return
         if self.path == "/api/admin/categories":
             self._handle_create_category()
@@ -453,6 +534,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
 
     def do_PUT(self):
+        if self.path.startswith("/api/users/"):
+            self._handle_update_user(self.path)
+            return
         if self.path == "/api/admin/settings":
             self._handle_update_company_settings()
             return
@@ -471,6 +555,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
 
     def do_DELETE(self):
+        if self.path.startswith("/api/users/"):
+            self._handle_delete_user(self.path)
+            return
         if self.path.startswith("/api/admin/branches/"):
             self._handle_deactivate_branch(self.path)
             return
@@ -483,6 +570,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
 
     def do_PATCH(self):
+        if self.path.startswith("/api/users/"):
+            self._handle_update_user(self.path)
+            return
         if self.path == "/api/admin/companies/default-branch":
             self._handle_set_company_default_branch()
             return
@@ -678,6 +768,157 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 }
             },
         )
+
+    def _handle_create_internal_user(self) -> None:
+        try:
+            authz = self._require_permissions({"usuarios:crear"})
+            if authz is None:
+                return
+            payload = self._read_json()
+            company_id = int(authz.get("company_id"))
+            actor_user_id = int(authz.get("sub"))
+            req = CreateInternalUserRequest(
+                company_id=company_id,
+                actor_user_id=actor_user_id,
+                email=payload["email"],
+                password=payload["password"],
+                role_id=int(payload["role_id"]),
+            )
+            base_url = self._resolve_base_url()
+            res = create_internal_user(self.repo, req, base_url=base_url)
+        except KeyError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except ForbiddenError as e:
+            self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": str(e) or "Prohibido"})
+            return
+        except NotFoundError:
+            self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            return
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except EmailAlreadyExistsError:
+            self._send_json(HTTPStatus.CONFLICT, {"error": "email_already_exists"})
+            return
+        except json.JSONDecodeError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        email_sent = self._try_send_verification_email(res.user.email, res.verification_url)
+
+        self._audit_data(
+            authz,
+            action="CREATE",
+            resource="usuarios",
+            details=json.dumps({"user_id": res.user.id, "role_id": res.role_id, "email": res.user.email}, separators=(",", ":")),
+        )
+        self._send_json(
+            HTTPStatus.CREATED,
+            {
+                "user": {
+                    "id": res.user.id,
+                    "company_id": res.user.company_id,
+                    "email": res.user.email,
+                    "is_active": res.user.is_active,
+                    "verified": res.user.verified,
+                    "role_id": res.role_id,
+                },
+                "verification_url": res.verification_url,
+                "verification_email_sent": email_sent,
+            },
+        )
+
+    def _handle_update_user(self, path: str) -> None:
+        try:
+            authz = self._require_permissions({"usuarios:editar"})
+            if authz is None:
+                return
+            company_id = int(authz.get("company_id"))
+            actor_user_id = int(authz.get("sub"))
+            user_id = self._parse_user_id_from_path(path)
+            payload = self._read_json()
+            self._assert_mutable_user_payload(payload)
+            res = update_user(
+                self.repo,
+                UpdateUserRequest(
+                    company_id=company_id,
+                    actor_user_id=actor_user_id,
+                    user_id=user_id,
+                    email=payload.get("email"),
+                    password=payload.get("password"),
+                    is_active=payload.get("is_active"),
+                    verified=payload.get("verified"),
+                ),
+            )
+        except NotFoundError:
+            self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            return
+        except ForbiddenError as e:
+            self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": str(e) or "Prohibido"})
+            return
+        except EmailAlreadyExistsError:
+            self._send_json(HTTPStatus.CONFLICT, {"error": "email_already_exists"})
+            return
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except json.JSONDecodeError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._audit_data(
+            authz,
+            action="UPDATE",
+            resource="usuarios",
+            details=json.dumps({"user_id": res.user.id}, separators=(",", ":")),
+        )
+        self._send_json(HTTPStatus.OK, {"user": self._serialize_user(res.user)})
+
+    def _handle_delete_user(self, path: str) -> None:
+        try:
+            authz = self._require_permissions({"usuarios:eliminar"})
+            if authz is None:
+                return
+            company_id = int(authz.get("company_id"))
+            actor_user_id = int(authz.get("sub"))
+            user_id = self._parse_user_id_from_path(path)
+            res = delete_user(
+                self.repo,
+                DeleteUserRequest(company_id=company_id, actor_user_id=actor_user_id, user_id=user_id),
+            )
+        except NotFoundError:
+            self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            return
+        except ForbiddenError as e:
+            self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": str(e) or "Prohibido"})
+            return
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._audit_data(
+            authz,
+            action="DELETE",
+            resource="usuarios",
+            details=json.dumps({"user_id": int(user_id), "changed": bool(res.changed)}, separators=(",", ":")),
+        )
+        self._send_json(HTTPStatus.OK, {"status": "ok", "changed": res.changed})
 
     def _handle_update_branch(self, path: str) -> None:
         try:
@@ -958,19 +1199,22 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         try:
             payload = self._read_json()
             req = RegisterUserRequest(
-                company_id=payload["company_id"],
                 email=payload["email"],
                 password=payload["password"],
-                role_id=payload["role_id"],
+                company_name=payload.get("company_name"),
+                currency=payload.get("currency", "USD"),
+                timezone=payload.get("timezone", "UTC"),
             )
-            host = self.headers.get("Host", "127.0.0.1")
-            base_url = f"http://{host}"
+            base_url = self._resolve_base_url()
             res = register_user(self.repo, req, base_url=base_url)
         except KeyError:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
             return
         except ValidationError as e:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except CompanyNameAlreadyExistsError:
+            self._send_json(HTTPStatus.CONFLICT, {"error": "company_name_exists"})
             return
         except EmailAlreadyExistsError:
             self._send_json(HTTPStatus.CONFLICT, {"error": "email_already_exists"})
@@ -982,16 +1226,20 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
             return
 
+        email_sent = self._try_send_verification_email(res.user.email, res.verification_url)
+
         self._send_json(
             HTTPStatus.CREATED,
             {
                 "id": res.user.id,
-                "company_id": res.user.company_id,
+                "company_id": res.company.id,
+                "company_name": res.company.name,
                 "email": res.user.email,
                 "is_active": res.user.is_active,
                 "verified": res.user.verified,
                 "role_id": res.role_id,
                 "verification_url": res.verification_url,
+                "verification_email_sent": email_sent,
             },
         )
 
@@ -1011,9 +1259,16 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 req,
                 jwt_secret=self.jwt_secret,
                 access_token_ttl_seconds=int(self.jwt_expiration_minutes) * 60,
+                refresh_token_ttl_seconds=int(self.refresh_token_expiration_minutes) * 60,
             )
         except KeyError:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except AccountNotVerifiedError:
+            self._send_json(
+                HTTPStatus.FORBIDDEN,
+                {"error": "account_not_verified", "message": "Debes verificar tu cuenta antes de iniciar sesión"},
+            )
             return
         except (ValidationError, InvalidCredentialsError):
             self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "invalid_credentials", "message": "Credenciales inválidas"})
@@ -1025,7 +1280,125 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
             return
 
-        self._send_json(HTTPStatus.OK, {"access_token": res.access_token, "token_type": "bearer"})
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "access_token": res.access_token,
+                "refresh_token": res.refresh_token,
+                "token_type": "bearer",
+            },
+        )
+
+    def _handle_logout(self) -> None:
+        try:
+            payload = self._read_json()
+            req = LogoutRequest(
+                company_id=payload["company_id"],
+                refresh_token=payload["refresh_token"],
+            )
+            logout_user(self.repo, req)
+        except KeyError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except RefreshTokenInvalidError:
+            self._send_json(
+                HTTPStatus.UNAUTHORIZED,
+                {"error": "invalid_refresh_token", "message": "Refresh token inválido o expirado"},
+            )
+            return
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except json.JSONDecodeError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._send_json(HTTPStatus.OK, {"status": "ok"})
+
+    def _handle_resend_verification(self) -> None:
+        try:
+            payload = self._read_json()
+            req = ResendVerificationEmailRequest(
+                company_id=payload["company_id"],
+                email=payload["email"],
+            )
+            res = resend_verification_email(
+                self.repo,
+                req,
+                base_url=self._resolve_base_url(),
+            )
+            if not res.sent or not res.verification_url:
+                self._send_json(HTTPStatus.OK, {"status": "ok", "sent": False})
+                return
+            self._send_verification_email(payload["email"], res.verification_url)
+        except KeyError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except EmailDeliveryError as e:
+            self._send_json(
+                HTTPStatus.BAD_GATEWAY,
+                {"error": "email_delivery_failed", "message": str(e) or "No fue posible enviar el correo"},
+            )
+            return
+        except json.JSONDecodeError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._send_json(HTTPStatus.OK, {"status": "ok", "sent": True})
+
+    def _handle_refresh(self) -> None:
+        try:
+            payload = self._read_json()
+            req = RefreshAccessTokenRequest(
+                company_id=payload["company_id"],
+                refresh_token=payload["refresh_token"],
+            )
+            if not isinstance(self.jwt_secret, str) or not self.jwt_secret:
+                self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+                return
+            res = refresh_access_token(
+                self.repo,
+                req,
+                jwt_secret=self.jwt_secret,
+                access_token_ttl_seconds=int(self.jwt_expiration_minutes) * 60,
+                refresh_token_ttl_seconds=int(self.refresh_token_expiration_minutes) * 60,
+            )
+        except KeyError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except RefreshTokenInvalidError:
+            self._send_json(
+                HTTPStatus.UNAUTHORIZED,
+                {"error": "invalid_refresh_token", "message": "Refresh token inválido o expirado"},
+            )
+            return
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except json.JSONDecodeError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "access_token": res.access_token,
+                "refresh_token": res.refresh_token,
+                "token_type": "bearer",
+            },
+        )
 
     def _handle_me(self) -> None:
         payload = self._require_auth_payload()
@@ -1042,12 +1415,99 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             },
         )
 
+    def _handle_list_users(self, query: str) -> None:
+        try:
+            authz = self._require_permissions({"usuarios:listar"})
+            if authz is None:
+                return
+            company_id = int(authz.get("company_id"))
+            params = parse_qs(query, keep_blank_values=True)
+            page = int((params.get("page") or ["1"])[0])
+            per_page = int((params.get("per_page") or ["20"])[0])
+            res = list_users(
+                self.repo,
+                ListUsersRequest(company_id=company_id, page=page, per_page=per_page),
+            )
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._audit_data(
+            authz,
+            action="READ",
+            resource="usuarios",
+            details=json.dumps(
+                {"returned": len(res.users), "page": res.page, "per_page": res.per_page},
+                separators=(",", ":"),
+            ),
+        )
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "data": [
+                    {
+                        "id": u.id,
+                        "company_id": u.company_id,
+                        "email": u.email,
+                        "is_active": u.is_active,
+                        "verified": u.verified,
+                        "roles": u.roles,
+                    }
+                    for u in res.users
+                ],
+                "pagination": {
+                    "total": res.total,
+                    "page": res.page,
+                    "per_page": res.per_page,
+                    "pages": res.pages,
+                },
+            },
+        )
+
+    def _handle_get_user(self, path: str) -> None:
+        try:
+            authz = self._require_permissions({"usuarios:listar"})
+            if authz is None:
+                return
+            company_id = int(authz.get("company_id"))
+            user_id = self._parse_user_id_from_path(path)
+            res = get_user(self.repo, GetUserRequest(company_id=company_id, user_id=user_id))
+        except NotFoundError:
+            self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            return
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._audit_data(
+            authz,
+            action="READ",
+            resource="usuarios",
+            details=json.dumps({"user_id": res.user.id}, separators=(",", ":")),
+        )
+        self._send_json(HTTPStatus.OK, {"user": self._serialize_user(res.user)})
+
     def _handle_verify_email(self, query: str) -> None:
         try:
             params = parse_qs(query, keep_blank_values=True)
             company_id_raw = (params.get("company_id") or [None])[0]
             token_raw = (params.get("token") or [None])[0]
-            req = VerifyEmailRequest(company_id=int(company_id_raw), token=token_raw)
+            req = VerifyEmailRequest(
+                company_id=(None if company_id_raw in (None, "") else int(company_id_raw)),
+                token=token_raw,
+            )
             verify_email(self.repo, req)
         except (TypeError, ValueError, KeyError):
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
@@ -1157,106 +1617,6 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                     }
                     for i in res.items
                 ]
-            },
-        )
-
-    def _handle_list_sat_regimenes(self, query: str) -> None:
-        try:
-            authz = self._require_permissions({"productos:leer"})
-            if authz is None:
-                return
-            req = self._parse_sat_catalog_request(query)
-            res = list_sat_regimenes_use_case(self.repo, req)
-        except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
-            return
-        except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
-            return
-        except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
-            return
-
-        self._audit_data(
-            authz,
-            action="READ",
-            resource="sat_regimenes",
-            details=json.dumps({"returned": len(res.items), "page": res.page, "per_page": res.per_page}, separators=(",", ":")),
-        )
-        self._send_json(
-            HTTPStatus.OK,
-            {
-                "data": [{"clave": r.clave, "descripcion": r.descripcion} for r in res.items],
-                "meta": {"total": res.total, "page": res.page, "per_page": res.per_page, "pages": res.pages},
-            },
-        )
-
-    def _handle_list_sat_unidades(self, query: str) -> None:
-        try:
-            authz = self._require_permissions({"productos:leer"})
-            if authz is None:
-                return
-            req = self._parse_sat_catalog_request(query)
-            res = list_sat_unidades_use_case(self.repo, req)
-        except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
-            return
-        except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
-            return
-        except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
-            return
-
-        self._audit_data(
-            authz,
-            action="READ",
-            resource="sat_unidades",
-            details=json.dumps({"returned": len(res.items), "page": res.page, "per_page": res.per_page}, separators=(",", ":")),
-        )
-        self._send_json(
-            HTTPStatus.OK,
-            {
-                "data": [{"clave": u.clave, "nombre": u.nombre, "simbolo": u.simbolo} for u in res.items],
-                "meta": {"total": res.total, "page": res.page, "per_page": res.per_page, "pages": res.pages},
-            },
-        )
-
-    def _handle_list_sat_productos(self, query: str) -> None:
-        try:
-            authz = self._require_permissions({"productos:leer"})
-            if authz is None:
-                return
-            req = self._parse_sat_catalog_request(query)
-            res = list_sat_productos_use_case(self.repo, req)
-        except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
-            return
-        except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
-            return
-        except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
-            return
-
-        self._audit_data(
-            authz,
-            action="READ",
-            resource="sat_productos",
-            details=json.dumps({"returned": len(res.items), "page": res.page, "per_page": res.per_page}, separators=(",", ":")),
-        )
-        self._send_json(
-            HTTPStatus.OK,
-            {
-                "data": [
-                    {
-                        "clave": p.clave,
-                        "descripcion": p.descripcion,
-                        "palabras_similares": p.palabras_similares,
-                    }
-                    for p in res.items
-                ],
-                "meta": {"total": res.total, "page": res.page, "per_page": res.per_page, "pages": res.pages},
             },
         )
 
@@ -1594,12 +1954,16 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 return
             req = AssignUserRoleRequest(
                 company_id=company_id,
+                actor_user_id=int(authz.get("sub")),
                 user_id=int(payload["user_id"]),
                 role_id=int(payload["role_id"]),
             )
             res = assign_user_role(self.repo, req)
         except KeyError:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except ForbiddenError as e:
+            self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": str(e) or "Prohibido"})
             return
         except NotFoundError as e:
             self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found", "message": str(e)})
@@ -1637,12 +2001,16 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 return
             req = RevokeUserRoleRequest(
                 company_id=company_id,
+                actor_user_id=int(authz.get("sub")),
                 user_id=int(payload["user_id"]),
                 role_id=int(payload["role_id"]),
             )
             res = revoke_user_role(self.repo, req)
         except KeyError:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except ForbiddenError as e:
+            self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": str(e) or "Prohibido"})
             return
         except NotFoundError as e:
             self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found", "message": str(e)})
@@ -1764,6 +2132,45 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         raw = self.rfile.read(length) if length > 0 else b""
         return json.loads(raw.decode("utf-8"))
+
+    def _parse_user_id_from_path(self, path: str) -> int:
+        raw_id = path.removeprefix("/api/users/").strip("/")
+        if not raw_id:
+            raise ValueError("missing user id")
+        return int(raw_id)
+
+    def _assert_mutable_user_payload(self, payload: dict) -> None:
+        for field in ("id", "company_id", "role_id", "roles"):
+            if field in payload:
+                raise ValidationError(f"{field} es inmutable")
+
+    def _serialize_user(self, user) -> dict:
+        return {
+            "id": user.id,
+            "company_id": user.company_id,
+            "email": user.email,
+            "is_active": user.is_active,
+            "verified": user.verified,
+            "roles": user.roles,
+        }
+
+    def _resolve_base_url(self) -> str:
+        configured = self.public_base_url
+        if isinstance(configured, str) and configured.strip():
+            return configured.strip().rstrip("/")
+        host = self.headers.get("Host", "127.0.0.1")
+        return f"http://{host}"
+
+    def _send_verification_email(self, to_email: str, verification_url: str) -> None:
+        sender = self.email_sender or NoopVerificationEmailSender()
+        sender.send_verification_email(to_email=str(to_email), verification_url=str(verification_url))
+
+    def _try_send_verification_email(self, to_email: str, verification_url: str) -> bool:
+        try:
+            self._send_verification_email(to_email, verification_url)
+            return True
+        except EmailDeliveryError:
+            return False
 
     def _send_json(self, status: HTTPStatus, body: dict) -> None:
         raw = json.dumps(body).encode("utf-8")

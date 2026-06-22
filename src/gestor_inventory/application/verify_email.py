@@ -3,6 +3,7 @@ import time
 from dataclasses import dataclass
 from typing import Protocol
 
+from gestor_inventory.application.verification_links import resolve_verification_token
 from gestor_inventory.domain.errors import ValidationError
 
 
@@ -18,8 +19,8 @@ class EmailVerificationRepository(Protocol):
 
 @dataclass(frozen=True)
 class VerifyEmailRequest:
-    company_id: int
     token: str
+    company_id: int | None = None
 
 
 def verify_email(
@@ -28,11 +29,11 @@ def verify_email(
     *,
     now: int | None = None,
 ) -> None:
-    company_id = _validate_company_id(req.company_id)
     token = _validate_token(req.token)
+    company_id, raw_token = resolve_verification_token(token=token, company_id=req.company_id)
     now_v = int(time.time()) if now is None else int(now)
 
-    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
     status, _user_id = repo.consume_email_verification_token_and_verify_user(
         company_id=company_id,
         token_hash=token_hash,
@@ -41,14 +42,6 @@ def verify_email(
     if status == "ok":
         return
     raise ValidationError("token inválido")
-
-
-def _validate_company_id(company_id: int) -> int:
-    if not isinstance(company_id, int) or company_id <= 0:
-        raise ValidationError("company_id inválido")
-    return company_id
-
-
 def _validate_token(token: str) -> str:
     if not isinstance(token, str):
         raise ValidationError("token inválido")

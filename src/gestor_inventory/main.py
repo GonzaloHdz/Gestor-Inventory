@@ -17,11 +17,40 @@ def main() -> None:
         jwt_expiration_minutes = 60
     if jwt_expiration_minutes <= 0:
         jwt_expiration_minutes = 60
+    try:
+        refresh_token_expiration_minutes = int(os.environ.get("JWT_REFRESH_EXPIRATION_MINUTES", "10080"))
+    except ValueError:
+        refresh_token_expiration_minutes = 10080
+    if refresh_token_expiration_minutes <= 0:
+        refresh_token_expiration_minutes = 10080
 
+<<<<<<< HEAD
     repo = SqliteSatRepository(db_path=db_path)
+=======
+    repo = SqliteUserRepository(db_path=db_path)
+    resend_api_key = os.environ.get("GI_RESEND_API_KEY", "").strip()
+    from_email = os.environ.get("GI_EMAIL_FROM", "").strip()
+    app_name = os.environ.get("GI_APP_NAME", "Gestor Inventory")
+    reply_to = os.environ.get("GI_EMAIL_REPLY_TO")
+    public_base_url = os.environ.get("GI_PUBLIC_BASE_URL")
+
+    if resend_api_key and from_email:
+        email_sender = ResendVerificationEmailSender(
+            api_key=resend_api_key,
+            from_email=from_email,
+            app_name=app_name,
+            reply_to=reply_to,
+        )
+    else:
+        email_sender = UnavailableVerificationEmailSender()
+
+>>>>>>> fe93a6d8e99f0ce7fff1db2a304cb3cbb990ee57
     HttpApiHandler.repo = repo
     HttpApiHandler.jwt_secret = jwt_secret
     HttpApiHandler.jwt_expiration_minutes = jwt_expiration_minutes
+    HttpApiHandler.refresh_token_expiration_minutes = refresh_token_expiration_minutes
+    HttpApiHandler.email_sender = email_sender
+    HttpApiHandler.public_base_url = public_base_url
     server = ThreadingHTTPServer((host, port), HttpApiHandler)
     server.serve_forever()
 

@@ -95,8 +95,6 @@ def create_product(repo: ProductRepository, req: CreateProductRequest) -> Create
             raise InvalidCategoryError("category_id inválido") from None
         raise
     return CreateProductResponse(product=product)
-
-
 def _validate_company_id(company_id: int) -> int:
     if not isinstance(company_id, int) or company_id <= 0:
         raise ValidationError("company_id inválido")
