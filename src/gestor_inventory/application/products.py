@@ -2,32 +2,49 @@ from dataclasses import dataclass
 import sqlite3
 from typing import Protocol
 
-from gestor_inventory.domain.errors import ValidationError
+from gestor_inventory.domain.errors import (
+    CrossTenantReferenceError,
+    DuplicateBarcodeError,
+    DuplicateSKUError,
+    InvalidCategoryError,
+    ValidationError,
+)
 from gestor_inventory.domain.operational import Product
 
 
 class ProductRepository(Protocol):
+    def company_is_active(self, *, company_id: int) -> bool: ...
+
+    def get_category_by_id(self, *, company_id: int, category_id: int) -> object | None: ...
+
     def create_product(
         self,
         *,
         company_id: int,
-        category_id: int | None,
+        category_id: int,
         sku: str,
+        barcode: str | None,
         name: str,
         description: str | None,
-        is_active: bool,
+        stock_minimum: int,
+        status: str,
     ) -> Product: ...
 
-    def list_products(self, *, company_id: int) -> list[Product]: ...
+    def get_product_by_sku(self, *, company_id: int, sku: str) -> Product | None: ...
+
+    def get_product_by_barcode(self, *, company_id: int, barcode: str) -> Product | None: ...
 
 
 @dataclass(frozen=True)
 class CreateProductRequest:
     company_id: int
-    category_id: int | None
     sku: str
     name: str
-    description: str | None
+    category_id: int
+    barcode: str | None = None
+    description: str | None = None
+    stock_minimum: int = 0
+    status: str = "active"
 
 
 @dataclass(frozen=True)
@@ -35,52 +52,53 @@ class CreateProductResponse:
     product: Product
 
 
-@dataclass(frozen=True)
-class ListProductsRequest:
-    company_id: int
-
-
-@dataclass(frozen=True)
-class ListProductsResponse:
-    products: list[Product]
-
-
 def create_product(repo: ProductRepository, req: CreateProductRequest) -> CreateProductResponse:
     company_id = _validate_company_id(req.company_id)
-    category_id = _validate_category_id(req.category_id) if req.category_id is not None else None
     sku = _validate_sku(req.sku)
+    barcode = _normalize_optional(req.barcode, field="barcode")
     name = _validate_name(req.name)
-    description = _validate_description(req.description) if req.description is not None else None
+    description = _normalize_optional(req.description, field="description")
+    category_id = _validate_category_id(req.category_id)
+    stock_minimum = _validate_stock_minimum(req.stock_minimum)
+    status = _validate_status(req.status)
+
+    if not repo.company_is_active(company_id=company_id):
+        raise CrossTenantReferenceError("empresa inválida")
+
+    if repo.get_category_by_id(company_id=company_id, category_id=category_id) is None:
+        raise InvalidCategoryError("category_id no pertenece a la empresa")
+
+    if repo.get_product_by_sku(company_id=company_id, sku=sku) is not None:
+        raise DuplicateSKUError("sku ya existe")
+
+    if barcode is not None and repo.get_product_by_barcode(company_id=company_id, barcode=barcode) is not None:
+        raise DuplicateBarcodeError("barcode ya existe")
+
     try:
         product = repo.create_product(
             company_id=company_id,
             category_id=category_id,
             sku=sku,
+            barcode=barcode,
             name=name,
             description=description,
-            is_active=True,
+            stock_minimum=stock_minimum,
+            status=status,
         )
-    except sqlite3.IntegrityError:
-        raise ValidationError("sku ya existe") from None
+    except sqlite3.IntegrityError as e:
+        msg = str(e).lower()
+        if "unique constraint failed" in msg and "products.company_id" in msg and "products.sku" in msg:
+            raise DuplicateSKUError("sku ya existe") from None
+        if "unique constraint failed" in msg and "products.company_id" in msg and "products.barcode" in msg:
+            raise DuplicateBarcodeError("barcode ya existe") from None
+        if "foreign key constraint failed" in msg:
+            raise InvalidCategoryError("category_id inválido") from None
+        raise
     return CreateProductResponse(product=product)
-
-
-def list_products(repo: ProductRepository, req: ListProductsRequest) -> ListProductsResponse:
-    company_id = _validate_company_id(req.company_id)
-    products = repo.list_products(company_id=company_id)
-    return ListProductsResponse(products=products)
-
-
 def _validate_company_id(company_id: int) -> int:
     if not isinstance(company_id, int) or company_id <= 0:
         raise ValidationError("company_id inválido")
     return company_id
-
-
-def _validate_category_id(category_id: int) -> int:
-    if not isinstance(category_id, int) or category_id <= 0:
-        raise ValidationError("category_id inválido")
-    return category_id
 
 
 def _validate_sku(sku: str) -> str:
@@ -101,8 +119,31 @@ def _validate_name(name: str) -> str:
     return v
 
 
-def _validate_description(description: str) -> str | None:
-    if not isinstance(description, str):
-        raise ValidationError("description inválido")
-    v = description.strip()
-    return v if v else None
+def _normalize_optional(value: str | None, *, field: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValidationError(f"{field} inválido")
+    v = value.strip()
+    return v or None
+
+
+def _validate_category_id(value: int) -> int:
+    if not isinstance(value, int) or value <= 0:
+        raise ValidationError("category_id inválido")
+    return value
+
+
+def _validate_stock_minimum(value: int) -> int:
+    if not isinstance(value, int) or value < 0:
+        raise ValidationError("stock_minimum inválido")
+    return value
+
+
+def _validate_status(value: str) -> str:
+    if not isinstance(value, str):
+        raise ValidationError("status inválido")
+    v = value.strip().lower()
+    if v not in ("active", "inactive"):
+        raise ValidationError("status inválido")
+    return v

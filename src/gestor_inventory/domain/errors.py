@@ -6,6 +6,34 @@ class WeakPasswordError(ValidationError):
     pass
 
 
+class CrossTenantReferenceError(ValidationError):
+    pass
+
+
+class SupplierNotFoundError(ValidationError):
+    pass
+
+
+class InvalidSupplierError(ValidationError):
+    pass
+
+
+class DuplicateSKUError(ValidationError):
+    pass
+
+
+class DuplicateBarcodeError(ValidationError):
+    pass
+
+
+class InvalidCategoryError(ValidationError):
+    pass
+
+
+class BranchHasInventoryError(Exception):
+    pass
+
+
 class ForbiddenError(Exception):
     pass
 
@@ -23,6 +51,14 @@ class EmailAlreadyExistsError(Exception):
 
 
 class InvalidCredentialsError(Exception):
+    pass
+
+
+class AccountNotVerifiedError(Exception):
+    pass
+
+
+class RefreshTokenInvalidError(Exception):
     pass
 
 

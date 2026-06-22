@@ -7,7 +7,20 @@ class Branch:
     id: int
     name: str
     address: str | None
+    city: str | None
+    country: str | None
+    status: str
     is_active: bool
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.company_id, int) or self.company_id <= 0:
+            raise ValueError("company_id inválido")
+        if self.city is not None and (not isinstance(self.city, str) or not self.city.strip()):
+            raise ValueError("city inválido")
+        if self.country is not None and (not isinstance(self.country, str) or not self.country.strip()):
+            raise ValueError("country inválido")
+        if not isinstance(self.status, str) or self.status not in ("active", "inactive"):
+            raise ValueError("status inválido")
 
 
 @dataclass(frozen=True)
@@ -15,18 +28,61 @@ class Category:
     company_id: int
     id: int
     name: str
+    description: str | None
+    status: str
     is_active: bool
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.company_id, int) or self.company_id <= 0:
+            raise ValueError("company_id inválido")
+        if not isinstance(self.name, str) or not self.name.strip():
+            raise ValueError("name inválido")
+        if self.description is not None and (not isinstance(self.description, str) or not self.description.strip()):
+            raise ValueError("description inválido")
+        if not isinstance(self.status, str) or self.status not in ("active", "inactive"):
+            raise ValueError("status inválido")
+        if bool(self.is_active) != (self.status == "active"):
+            raise ValueError("inconsistencia status/is_active")
 
 
 @dataclass(frozen=True)
 class Product:
     company_id: int
     id: int
-    category_id: int | None
+    category_id: int
     sku: str
+    barcode: str | None
     name: str
     description: str | None
+    stock_minimum: int
+    status: str
     is_active: bool
+    created_at: int
+    updated_at: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.company_id, int) or self.company_id <= 0:
+            raise ValueError("company_id inválido")
+        if not isinstance(self.category_id, int) or self.category_id <= 0:
+            raise ValueError("category_id inválido")
+        if not isinstance(self.sku, str) or not self.sku.strip():
+            raise ValueError("sku inválido")
+        if self.barcode is not None and (not isinstance(self.barcode, str) or not self.barcode.strip()):
+            raise ValueError("barcode inválido")
+        if not isinstance(self.name, str) or not self.name.strip():
+            raise ValueError("name inválido")
+        if self.description is not None and (not isinstance(self.description, str) or not self.description.strip()):
+            raise ValueError("description inválido")
+        if not isinstance(self.stock_minimum, int) or self.stock_minimum < 0:
+            raise ValueError("stock_minimum inválido")
+        if not isinstance(self.status, str) or self.status not in ("active", "inactive"):
+            raise ValueError("status inválido")
+        if bool(self.is_active) != (self.status == "active"):
+            raise ValueError("inconsistencia status/is_active")
+        if not isinstance(self.created_at, int) or self.created_at <= 0:
+            raise ValueError("created_at inválido")
+        if not isinstance(self.updated_at, int) or self.updated_at <= 0:
+            raise ValueError("updated_at inválido")
 
 
 @dataclass(frozen=True)
@@ -37,6 +93,12 @@ class InventoryItem:
     quantity: int
     min_quantity: int
     updated_at: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.company_id, int) or self.company_id <= 0:
+            raise ValueError("company_id inválido")
+        if not isinstance(self.branch_id, int) or self.branch_id <= 0:
+            raise ValueError("branch_id inválido")
 
 
 @dataclass(frozen=True)
@@ -50,3 +112,38 @@ class InventoryMovement:
     quantity: int
     reference: str | None
     created_at: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.company_id, int) or self.company_id <= 0:
+            raise ValueError("company_id inválido")
+        if not isinstance(self.branch_id, int) or self.branch_id <= 0:
+            raise ValueError("branch_id inválido")
+
+
+@dataclass(frozen=True)
+class Supplier:
+    company_id: int
+    id: int
+    name: str
+    document_id: str | None
+    contact_email: str | None
+    phone: str | None
+    status: str
+    created_at: int
+    updated_at: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.company_id, int) or self.company_id <= 0:
+            raise ValueError("company_id inválido")
+        if not isinstance(self.name, str) or not self.name.strip():
+            raise ValueError("name inválido")
+        if self.document_id is not None and (not isinstance(self.document_id, str) or not self.document_id.strip()):
+            raise ValueError("document_id inválido")
+        if self.contact_email is not None and (
+            not isinstance(self.contact_email, str) or not self.contact_email.strip()
+        ):
+            raise ValueError("contact_email inválido")
+        if self.phone is not None and (not isinstance(self.phone, str) or not self.phone.strip()):
+            raise ValueError("phone inválido")
+        if not isinstance(self.status, str) or self.status not in ("active", "inactive"):
+            raise ValueError("status inválido")
