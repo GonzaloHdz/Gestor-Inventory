@@ -26,13 +26,13 @@ class VerifyEmailTests(unittest.TestCase):
         parsed = urlparse(reg.verification_url)
         token = parse_qs(parsed.query)["token"][0]
 
-        verify_email(self.repo, VerifyEmailRequest(company_id=reg.company.id, token=token), now=1_000_010)
+        verify_email(self.repo, VerifyEmailRequest(token=token), now=1_000_010)
 
         user = self.repo.get_user_for_login(company_id=reg.company.id, email="user@example.com")
         self.assertIsNotNone(user)
         self.assertTrue(user["verified"])
 
-    def test_verify_email_is_isolated_by_company(self):
+    def test_verify_email_old_format_is_isolated_by_company(self):
         reg = register_user(
             self.repo,
             RegisterUserRequest(email="user@example.com", password="Secret1!", company_name="Verify Two"),
@@ -40,9 +40,10 @@ class VerifyEmailTests(unittest.TestCase):
         )
         parsed = urlparse(reg.verification_url)
         token = parse_qs(parsed.query)["token"][0]
+        raw_token = token.split(".", 1)[1]
 
         with self.assertRaises(ValidationError):
-            verify_email(self.repo, VerifyEmailRequest(company_id=reg.company.id + 1, token=token), now=1_000_010)
+            verify_email(self.repo, VerifyEmailRequest(company_id=reg.company.id + 1, token=raw_token), now=1_000_010)
 
         user = self.repo.get_user_for_login(company_id=reg.company.id, email="user@example.com")
         self.assertIsNotNone(user)

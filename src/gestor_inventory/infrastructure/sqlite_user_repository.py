@@ -131,6 +131,28 @@ class SqliteUserRepository:
                 "verified": bool(verified),
             }
 
+    def get_user_for_verification(self, *, company_id: int, email: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, company_id, email, is_active, verified
+                FROM users
+                WHERE company_id = ? AND email = ?
+                LIMIT 1
+                """,
+                (int(company_id), str(email)),
+            ).fetchone()
+            if row is None:
+                return None
+            user_id_v, company_id_v, email_v, is_active, verified = row
+            return {
+                "id": int(user_id_v),
+                "company_id": int(company_id_v),
+                "email": str(email_v),
+                "is_active": bool(is_active),
+                "verified": bool(verified),
+            }
+
     def create_password_reset_token(
         self,
         *,

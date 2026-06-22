@@ -47,8 +47,8 @@ class CreateInternalUserTests(unittest.TestCase):
         self.assertEqual(res.role_id, 10)
         parsed = urlparse(res.verification_url)
         params = parse_qs(parsed.query)
-        self.assertEqual(params["company_id"][0], "1")
-        self.assertTrue(params["token"][0])
+        self.assertEqual(parsed.path, "/api/auth/verify")
+        self.assertTrue(params["token"][0].startswith("1."))
 
     def test_admin_cannot_create_superadmin(self):
         with self.assertRaises(ForbiddenError):

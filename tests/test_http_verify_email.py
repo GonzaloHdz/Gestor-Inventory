@@ -86,6 +86,7 @@ class HttpVerifyEmailTests(unittest.TestCase):
         self.assertNotEqual(body["company_id"], 999)
 
         parsed = urlparse(body["verification_url"])
+        self.assertEqual(parsed.path, "/api/auth/verify")
         verify_path = f"{parsed.path}?{parsed.query}"
         status2, body2 = self._get(verify_path)
         self.assertEqual(status2, 200)
@@ -138,6 +139,22 @@ class HttpVerifyEmailTests(unittest.TestCase):
         self.assertEqual(status_login_2, 200)
         self.assertIn("access_token", body_login_2)
         self.assertIn("refresh_token", body_login_2)
+
+    def test_legacy_verify_email_endpoint_still_works(self):
+        status_reg, body_reg = self._post_json(
+            "/api/users/register",
+            {"company_name": "Empresa Legacy", "email": "legacy@example.com", "password": "Secret1!"},
+        )
+        self.assertEqual(status_reg, 201)
+
+        parsed = urlparse(body_reg["verification_url"])
+        embedded_token = dict([part.split("=", 1) for part in parsed.query.split("&")]).get("token", "")
+        raw_token = embedded_token.split(".", 1)[1]
+        status_verify, body_verify = self._get(
+            f"/api/auth/verify-email?company_id={body_reg['company_id']}&token={raw_token}"
+        )
+        self.assertEqual(status_verify, 200)
+        self.assertEqual(body_verify.get("status"), "ok")
 
 
 if __name__ == "__main__":

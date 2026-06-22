@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from urllib.parse import parse_qs, urlparse
 
 ROOT = os.path.dirname(os.path.dirname(__file__))
 SRC = os.path.join(ROOT, "src")
@@ -36,7 +37,11 @@ class RegisterUserTests(unittest.TestCase):
         self.assertTrue(res.user.is_active)
         self.assertFalse(res.user.verified)
         self.assertEqual(res.role_id, 12)
-        self.assertIn(f"company_id={res.company.id}", res.verification_url)
+        parsed = urlparse(res.verification_url)
+        params = parse_qs(parsed.query)
+        self.assertEqual(parsed.path, "/api/auth/verify")
+        token = params["token"][0]
+        self.assertTrue(token.startswith(f"{res.company.id}."))
         self.assertTrue(verify_password("Secret1!", res.user.password_hash))
 
     def test_register_user_rejects_weak_password_with_clear_message(self):

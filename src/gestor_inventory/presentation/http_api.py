@@ -7,6 +7,10 @@ from http.server import BaseHTTPRequestHandler
 from gestor_inventory.application.login_user import LoginRequest, login_user
 from gestor_inventory.application.logout_user import LogoutRequest, logout_user
 from gestor_inventory.application.refresh_access_token import RefreshAccessTokenRequest, refresh_access_token
+from gestor_inventory.application.resend_verification_email import (
+    ResendVerificationEmailRequest,
+    resend_verification_email,
+)
 from gestor_inventory.application.categories import (
     CreateCategoryRequest,
     GetCategoryRequest,
@@ -65,6 +69,7 @@ from gestor_inventory.domain.errors import (
     RefreshTokenInvalidError,
     ValidationError,
 )
+from gestor_inventory.infrastructure.resend_email_sender import EmailDeliveryError, NoopVerificationEmailSender
 from gestor_inventory.security.jwt import verify_jwt_hs256
 
 
@@ -73,11 +78,16 @@ class HttpApiHandler(BaseHTTPRequestHandler):
     jwt_secret = None
     jwt_expiration_minutes = 60
     refresh_token_expiration_minutes = 10080
+    email_sender = NoopVerificationEmailSender()
+    public_base_url = None
 
     def do_GET(self):
         parsed = urlparse(self.path)
         if parsed.path == "/api/auth/me":
             self._handle_me()
+            return
+        if parsed.path == "/api/auth/verify":
+            self._handle_verify_email(parsed.query)
             return
         if parsed.path == "/api/auth/verify-email":
             self._handle_verify_email(parsed.query)
@@ -409,6 +419,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         if self.path == "/api/auth/login":
             self._handle_login()
             return
+        if self.path == "/api/auth/resend-verification":
+            self._handle_resend_verification()
+            return
         if self.path == "/api/auth/refresh":
             self._handle_refresh()
             return
@@ -695,8 +708,7 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 password=payload["password"],
                 role_id=int(payload["role_id"]),
             )
-            host = self.headers.get("Host", "127.0.0.1")
-            base_url = f"http://{host}"
+            base_url = self._resolve_base_url()
             res = create_internal_user(self.repo, req, base_url=base_url)
         except KeyError:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
@@ -720,6 +732,8 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
             return
 
+        email_sent = self._try_send_verification_email(res.user.email, res.verification_url)
+
         self._audit_data(
             authz,
             action="CREATE",
@@ -738,6 +752,7 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                     "role_id": res.role_id,
                 },
                 "verification_url": res.verification_url,
+                "verification_email_sent": email_sent,
             },
         )
 
@@ -1026,8 +1041,7 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 currency=payload.get("currency", "USD"),
                 timezone=payload.get("timezone", "UTC"),
             )
-            host = self.headers.get("Host", "127.0.0.1")
-            base_url = f"http://{host}"
+            base_url = self._resolve_base_url()
             res = register_user(self.repo, req, base_url=base_url)
         except KeyError:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
@@ -1048,6 +1062,8 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
             return
 
+        email_sent = self._try_send_verification_email(res.user.email, res.verification_url)
+
         self._send_json(
             HTTPStatus.CREATED,
             {
@@ -1059,6 +1075,7 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 "verified": res.user.verified,
                 "role_id": res.role_id,
                 "verification_url": res.verification_url,
+                "verification_email_sent": email_sent,
             },
         )
 
@@ -1137,6 +1154,43 @@ class HttpApiHandler(BaseHTTPRequestHandler):
 
         self._send_json(HTTPStatus.OK, {"status": "ok"})
 
+    def _handle_resend_verification(self) -> None:
+        try:
+            payload = self._read_json()
+            req = ResendVerificationEmailRequest(
+                company_id=payload["company_id"],
+                email=payload["email"],
+            )
+            res = resend_verification_email(
+                self.repo,
+                req,
+                base_url=self._resolve_base_url(),
+            )
+            if not res.sent or not res.verification_url:
+                self._send_json(HTTPStatus.OK, {"status": "ok", "sent": False})
+                return
+            self._send_verification_email(payload["email"], res.verification_url)
+        except KeyError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except EmailDeliveryError as e:
+            self._send_json(
+                HTTPStatus.BAD_GATEWAY,
+                {"error": "email_delivery_failed", "message": str(e) or "No fue posible enviar el correo"},
+            )
+            return
+        except json.JSONDecodeError:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._send_json(HTTPStatus.OK, {"status": "ok", "sent": True})
+
     def _handle_refresh(self) -> None:
         try:
             payload = self._read_json()
@@ -1202,7 +1256,10 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             params = parse_qs(query, keep_blank_values=True)
             company_id_raw = (params.get("company_id") or [None])[0]
             token_raw = (params.get("token") or [None])[0]
-            req = VerifyEmailRequest(company_id=int(company_id_raw), token=token_raw)
+            req = VerifyEmailRequest(
+                company_id=(None if company_id_raw in (None, "") else int(company_id_raw)),
+                token=token_raw,
+            )
             verify_email(self.repo, req)
         except (TypeError, ValueError, KeyError):
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
@@ -1820,6 +1877,24 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         raw = self.rfile.read(length) if length > 0 else b""
         return json.loads(raw.decode("utf-8"))
+
+    def _resolve_base_url(self) -> str:
+        configured = self.public_base_url
+        if isinstance(configured, str) and configured.strip():
+            return configured.strip().rstrip("/")
+        host = self.headers.get("Host", "127.0.0.1")
+        return f"http://{host}"
+
+    def _send_verification_email(self, to_email: str, verification_url: str) -> None:
+        sender = self.email_sender or NoopVerificationEmailSender()
+        sender.send_verification_email(to_email=str(to_email), verification_url=str(verification_url))
+
+    def _try_send_verification_email(self, to_email: str, verification_url: str) -> bool:
+        try:
+            self._send_verification_email(to_email, verification_url)
+            return True
+        except EmailDeliveryError:
+            return False
 
     def _send_json(self, status: HTTPStatus, body: dict) -> None:
         raw = json.dumps(body).encode("utf-8")

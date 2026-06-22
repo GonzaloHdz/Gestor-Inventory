@@ -9,6 +9,7 @@ from gestor_inventory.domain.rbac import Role
 from gestor_inventory.domain.user import User
 from gestor_inventory.security.password_hash import hash_password
 from gestor_inventory.security.password_policy import validate_password_strength
+from gestor_inventory.application.verification_links import build_verification_url
 
 
 class InternalUserRepository(Protocol):
@@ -92,7 +93,7 @@ def create_internal_user(
         expires_at=expires_at,
         created_at=now_v,
     )
-    verification_url = f"{base_url.rstrip('/')}/api/auth/verify-email?company_id={company_id}&token={token}"
+    verification_url = build_verification_url(base_url=base_url, company_id=company_id, raw_token=token)
     return CreateInternalUserResponse(user=user, role_id=assigned_role_id, verification_url=verification_url)
 
 
