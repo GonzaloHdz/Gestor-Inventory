@@ -175,7 +175,21 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/auth/verify":
             self._handle_verify_email(parsed.query)
             return
-        if parsed.path == "/api/inventory/movements":
+        if parsed.path in ("/api/dashboard", "/api/dashboard/summary"):
+            self._handle_dashboard_summary(parsed.query)
+            return
+        if parsed.path in ("/api/alerts", "/api/dashboard/alerts"):
+            self._handle_dashboard_alerts(parsed.query)
+            return
+        if parsed.path in ("/api/dashboard/movimientos-ultimos-7-dias", "/api/dashboard/chart"):
+            self._handle_dashboard_chart(parsed.query)
+            return
+        if parsed.path in (
+            "/api/inventory/movements",
+            "/api/movements",
+            "/api/movimientos",
+            "/api/dashboard/movimientos-recientes",
+        ):
             self._handle_list_inventory_movements(parsed.query)
             return
         if parsed.path == "/api/products":
@@ -1754,6 +1768,242 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 ]
             },
         )
+
+    def _handle_list_inventory_movements(self, query: str) -> None:
+        try:
+            authz = self._require_permissions({"movimientos:leer"})
+            if authz is None:
+                return
+            company_id = int(authz.get("company_id"))
+            params = parse_qs(query, keep_blank_values=True)
+            
+            limit_raw = (params.get("limit") or [None])[0]
+            limit = int(limit_raw) if limit_raw else 50
+
+            branch_id_raw = (params.get("branch_id") or [None])[0]
+            if branch_id_raw is None:
+                token_branch_id = authz.get("branch_id")
+                if token_branch_id is None:
+                    branches = self.repo.list_branches(company_id=company_id, city=None, status="active")
+                    if not branches:
+                        raise ValueError("No active branch found")
+                    branch_id = branches[0].id
+                else:
+                    branch_id = int(token_branch_id)
+            else:
+                branch_id = int(branch_id_raw)
+
+            if not self._require_branch_access(authz, branch_id):
+                return
+
+            res = list_inventory_movements(
+                self.repo,
+                ListInventoryMovementsRequest(
+                    company_id=company_id,
+                    branch_id=branch_id,
+                    limit=limit
+                )
+            )
+
+            movements_data = []
+            for m in res.movements:
+                prod = self.repo.get_product_by_id(company_id=company_id, product_id=m.product_id)
+                branch = self.repo.get_branch_by_id(company_id=company_id, branch_id=m.branch_id)
+                user = self.repo.get_user_by_id(company_id=company_id, user_id=m.user_id)
+
+                movements_data.append({
+                    "id": m.id,
+                    "fecha": time.strftime("%Y-%m-%d", time.localtime(m.created_at)),
+                    "rawDate": time.strftime("%Y-%m-%d", time.localtime(m.created_at)),
+                    "hora": time.strftime("%H:%M", time.localtime(m.created_at)),
+                    "created_at": m.created_at * 1000,
+                    "tipo": m.movement_type.capitalize(),
+                    "type": m.movement_type,
+                    "sku": prod.sku if prod else f"SKU-{m.product_id}",
+                    "producto": prod.name if prod else "Sin producto",
+                    "product": prod.name if prod else "Sin producto",
+                    "cantidad": m.quantity,
+                    "quantity": m.quantity,
+                    "origen": branch.name if branch else "Sin origen",
+                    "destino": branch.name if branch else "Sin destino",
+                    "almacen": branch.name if branch else "Sin almacen",
+                    "warehouse": branch.name if branch else "Sin almacen",
+                    "usuario": user.email if user else "Sistema",
+                    "user": user.email if user else "Sistema",
+                })
+
+            self._send_json(HTTPStatus.OK, movements_data)
+        except ValidationError as e:
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
+        except (TypeError, ValueError):
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
+        except Exception as e:
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, f"Error interno: {str(e)}")
+
+    def _handle_dashboard_summary(self, query: str) -> None:
+        try:
+            authz = self._require_permissions({"productos:leer"})
+            if authz is None:
+                return
+            company_id = int(authz.get("company_id"))
+            params = parse_qs(query, keep_blank_values=True)
+            
+            branch_id_raw = (params.get("branch_id") or [None])[0]
+            if branch_id_raw is None:
+                token_branch_id = authz.get("branch_id")
+                if token_branch_id is None:
+                    branches = self.repo.list_branches(company_id=company_id, city=None, status="active")
+                    if not branches:
+                        raise ValueError("No active branch found")
+                    branch_id = branches[0].id
+                else:
+                    branch_id = int(token_branch_id)
+            else:
+                branch_id = int(branch_id_raw)
+
+            if not self._require_branch_access(authz, branch_id):
+                return
+
+            products_res = list_products(
+                self.repo,
+                ListProductsRequest(
+                    company_id=company_id,
+                    category_id=None,
+                    status="active",
+                    search=None,
+                    page=1,
+                    per_page=10000
+                )
+            )
+            total_products = len(products_res.products)
+
+            branches = self.repo.list_branches(company_id=company_id, city=None, status="active")
+            total_almacenes = len(branches)
+
+            all_movements = self.repo.list_inventory_movements(company_id=company_id, branch_id=branch_id, limit=1000)
+            current_date_str = time.strftime("%Y-%m-%d", time.localtime(time.time()))
+            today_start_epoch = int(time.mktime(time.strptime(current_date_str, "%Y-%m-%d")))
+            movimientos_hoy = sum(1 for m in all_movements if m.created_at >= today_start_epoch)
+
+            inventory_items = self.repo.list_inventory_items(company_id=company_id, branch_id=branch_id)
+            alertas_stock = sum(1 for item in inventory_items if item.quantity <= item.min_quantity)
+
+            self._send_json(
+                HTTPStatus.OK,
+                {
+                    "productos": total_products,
+                    "almacenes": total_almacenes,
+                    "movimientos_hoy": movimientos_hoy,
+                    "alertas_stock": alertas_stock
+                }
+            )
+        except Exception as e:
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, f"Error interno: {str(e)}")
+
+    def _handle_dashboard_alerts(self, query: str) -> None:
+        try:
+            authz = self._require_permissions({"inventario:leer"})
+            if authz is None:
+                return
+            company_id = int(authz.get("company_id"))
+            params = parse_qs(query, keep_blank_values=True)
+            
+            branch_id_raw = (params.get("branch_id") or [None])[0]
+            if branch_id_raw is None:
+                token_branch_id = authz.get("branch_id")
+                if token_branch_id is None:
+                    branches = self.repo.list_branches(company_id=company_id, city=None, status="active")
+                    if not branches:
+                        raise ValueError("No active branch found")
+                    branch_id = branches[0].id
+                else:
+                    branch_id = int(token_branch_id)
+            else:
+                branch_id = int(branch_id_raw)
+
+            if not self._require_branch_access(authz, branch_id):
+                return
+
+            inventory_items = self.repo.list_inventory_items(company_id=company_id, branch_id=branch_id)
+            alerts = []
+            
+            for item in inventory_items:
+                if item.quantity <= item.min_quantity:
+                    prod = self.repo.get_product_by_id(company_id=company_id, product_id=item.product_id)
+                    prod_name = prod.name if prod else f"Producto #{item.product_id}"
+                    alerts.append({
+                        "id": f"alert-{item.product_id}",
+                        "title": prod_name,
+                        "message": f"Stock bajo: {item.quantity} unidades (mínimo {item.min_quantity}).",
+                        "time": time.strftime("%Y-%m-%d %H:%M", time.localtime(item.updated_at)),
+                        "created_at": item.updated_at * 1000
+                    })
+
+            self._send_json(HTTPStatus.OK, {"data": alerts})
+        except Exception as e:
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, f"Error interno: {str(e)}")
+
+    def _handle_dashboard_chart(self, query: str) -> None:
+        try:
+            authz = self._require_permissions({"movimientos:leer"})
+            if authz is None:
+                return
+            company_id = int(authz.get("company_id"))
+            params = parse_qs(query, keep_blank_values=True)
+            
+            branch_id_raw = (params.get("branch_id") or [None])[0]
+            if branch_id_raw is None:
+                token_branch_id = authz.get("branch_id")
+                if token_branch_id is None:
+                    branches = self.repo.list_branches(company_id=company_id, city=None, status="active")
+                    if not branches:
+                        raise ValueError("No active branch found")
+                    branch_id = branches[0].id
+                else:
+                    branch_id = int(token_branch_id)
+            else:
+                branch_id = int(branch_id_raw)
+
+            if not self._require_branch_access(authz, branch_id):
+                return
+
+            import datetime
+            days_translation = {
+                "Monday": "Lun",
+                "Tuesday": "Mar",
+                "Wednesday": "Mié",
+                "Thursday": "Jue",
+                "Friday": "Vie",
+                "Saturday": "Sáb",
+                "Sunday": "Dom"
+            }
+            
+            today = datetime.date.today()
+            chart_days = []
+            for i in range(6, -1, -1):
+                day_date = today - datetime.timedelta(days=i)
+                date_str = day_date.strftime("%Y-%m-%d")
+                day_name_en = day_date.strftime("%A")
+                day_label = days_translation.get(day_name_en, day_name_en[:3])
+                chart_days.append({
+                    "date_str": date_str,
+                    "label": day_label,
+                    "value": 0
+                })
+                
+            all_movements = self.repo.list_inventory_movements(company_id=company_id, branch_id=branch_id, limit=1000)
+            
+            for m in all_movements:
+                m_date_str = time.strftime("%Y-%m-%d", time.localtime(m.created_at))
+                for day in chart_days:
+                    if day["date_str"] == m_date_str:
+                        day["value"] += 1
+                        break
+                        
+            chart_data = [{"label": d["label"], "value": d["value"]} for d in chart_days]
+            self._send_json(HTTPStatus.OK, {"data": chart_data})
+        except Exception as e:
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, f"Error interno: {str(e)}")
 
     def _handle_get_category(self, path: str) -> None:
         try:
