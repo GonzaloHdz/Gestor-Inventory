@@ -1319,6 +1319,24 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                         return
                 else:
                     payload["company_id"] = self.tenant_id
+            else:
+                payload_company_id = payload.get("company_id")
+                if payload_company_id is None:
+                    email = payload.get("email")
+                    if email:
+                        if hasattr(self.repo, "find_company_id_by_email"):
+                            resolved_id = self.repo.find_company_id_by_email(email=email)
+                            if resolved_id is not None:
+                                payload["company_id"] = resolved_id
+                            else:
+                                self._send_error(HTTPStatus.UNAUTHORIZED, "Credenciales inválidas")
+                                return
+                        else:
+                            self._send_error(HTTPStatus.BAD_REQUEST, "Se requiere company_id")
+                            return
+                    else:
+                        self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
+                        return
             req = LoginRequest(
                 company_id=payload["company_id"],
                 email=payload["email"],
