@@ -2,6 +2,10 @@ import os
 import secrets
 from http.server import ThreadingHTTPServer
 
+from gestor_inventory.infrastructure.resend_email_sender import (
+    ResendVerificationEmailSender,
+    UnavailableVerificationEmailSender,
+)
 from gestor_inventory.infrastructure.sqlite_sat_repository import SqliteSatRepository
 from gestor_inventory.presentation.http_api import HttpApiHandler
 
@@ -24,10 +28,7 @@ def main() -> None:
     if refresh_token_expiration_minutes <= 0:
         refresh_token_expiration_minutes = 10080
 
-<<<<<<< HEAD
     repo = SqliteSatRepository(db_path=db_path)
-=======
-    repo = SqliteUserRepository(db_path=db_path)
     resend_api_key = os.environ.get("GI_RESEND_API_KEY", "").strip()
     from_email = os.environ.get("GI_EMAIL_FROM", "").strip()
     app_name = os.environ.get("GI_APP_NAME", "Gestor Inventory")
@@ -43,8 +44,6 @@ def main() -> None:
         )
     else:
         email_sender = UnavailableVerificationEmailSender()
-
->>>>>>> fe93a6d8e99f0ce7fff1db2a304cb3cbb990ee57
     HttpApiHandler.repo = repo
     HttpApiHandler.jwt_secret = jwt_secret
     HttpApiHandler.jwt_expiration_minutes = jwt_expiration_minutes
