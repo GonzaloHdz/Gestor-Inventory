@@ -139,6 +139,21 @@ class HttpTenantHeaderTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn("inquilino no coincide", body.get("error", ""))
 
+    def test_login_resolves_company_id_from_email_when_missing(self):
+        status, body = self._request(
+            "POST", "/api/auth/login",
+            body={"email": "admin@example.com", "password": "Strong1!"}
+        )
+        self.assertEqual(status, 403)
+        self.assertIn("verificar", body.get("error", ""))
+
+        status, body = self._request(
+            "POST", "/api/auth/login",
+            body={"email": "nonexistent@example.com", "password": "Strong1!"}
+        )
+        self.assertEqual(status, 401)
+        self.assertIn("Credenciales inválidas", body.get("error", ""))
+
     def test_protected_route_harmony_with_x_tenant_id(self):
         token_1 = self._token_for(user_id=self.user.id, company_id=1, email=self.user.email)
 

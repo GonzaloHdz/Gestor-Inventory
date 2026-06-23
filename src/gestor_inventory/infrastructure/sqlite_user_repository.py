@@ -32,6 +32,14 @@ class SqliteUserRepository:
             ).fetchone()
             return row is not None
 
+    def find_company_id_by_email(self, *, email: str) -> int | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT company_id FROM users WHERE email = ? LIMIT 1",
+                (email.strip().lower(),),
+            ).fetchone()
+            return int(row[0]) if row else None
+
     def get_user_id_by_email(self, *, company_id: int, email: str) -> int | None:
         with self._connect() as conn:
             row = conn.execute(
