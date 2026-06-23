@@ -111,7 +111,7 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         else:
             self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Tenant-ID")
         super().end_headers()
 
     def do_OPTIONS(self):
@@ -119,8 +119,50 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
+    def _preprocess_tenant(self) -> bool:
+        tenant_header = self.headers.get("X-Tenant-ID")
+        self.tenant_id = None
+        if tenant_header is not None:
+            try:
+                tenant_id = int(tenant_header)
+                if tenant_id <= 0:
+                    raise ValueError()
+            except (ValueError, TypeError):
+                self._send_error(HTTPStatus.BAD_REQUEST, "Inquilino inválido")
+                return False
+
+            if not self.repo or not self.repo.company_is_active(company_id=tenant_id):
+                self._send_error(HTTPStatus.FORBIDDEN, "Inquilino no encontrado o inactivo")
+                return False
+
+            self.tenant_id = tenant_id
+        return True
+
+    def _handle_get_public_branding(self) -> None:
+        if self.tenant_id is None:
+            self._send_error(HTTPStatus.BAD_REQUEST, "Se requiere la cabecera X-Tenant-ID")
+            return
+        try:
+            res = get_company_settings(self.repo, GetCompanySettingsRequest(company_id=self.tenant_id))
+        except ValidationError as e:
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
+            return
+        except Exception:
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
+            return
+
+        self._send_json(
+            HTTPStatus.OK,
+            {"data": [{"key": s.setting_key, "value": s.setting_value} for s in res.settings]},
+        )
+
     def do_GET(self):
+        if not self._preprocess_tenant():
+            return
         parsed = urlparse(self.path)
+        if parsed.path == "/api/companies/branding":
+            self._handle_get_public_branding()
+            return
         if parsed.path == "/api/auth/me":
             self._handle_me()
             return
@@ -472,6 +514,8 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         )
 
     def do_POST(self):
+        if not self._preprocess_tenant():
+            return
         if self.path == "/api/users/register":
             self._handle_register()
             return
@@ -535,6 +579,8 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         self._send_error(HTTPStatus.NOT_FOUND, "No encontrado")
 
     def do_PUT(self):
+        if not self._preprocess_tenant():
+            return
         if self.path.startswith("/api/users/"):
             self._handle_update_user(self.path)
             return
@@ -556,6 +602,8 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         self._send_error(HTTPStatus.NOT_FOUND, "No encontrado")
 
     def do_DELETE(self):
+        if not self._preprocess_tenant():
+            return
         if self.path.startswith("/api/users/"):
             self._handle_delete_user(self.path)
             return
@@ -571,6 +619,8 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         self._send_error(HTTPStatus.NOT_FOUND, "No encontrado")
 
     def do_PATCH(self):
+        if not self._preprocess_tenant():
+            return
         if self.path.startswith("/api/users/"):
             self._handle_update_user(self.path)
             return
@@ -1196,6 +1246,19 @@ class HttpApiHandler(BaseHTTPRequestHandler):
     def _handle_register(self) -> None:
         try:
             payload = self._read_json()
+            if self.tenant_id is not None:
+                payload_company_id = payload.get("company_id")
+                if payload_company_id is not None:
+                    try:
+                        if int(payload_company_id) != self.tenant_id:
+                            self._send_error(HTTPStatus.BAD_REQUEST, "El inquilino no coincide con el cuerpo de la petición")
+                            return
+                    except (ValueError, TypeError):
+                        self._send_error(HTTPStatus.BAD_REQUEST, "El inquilino no coincide con el cuerpo de la petición")
+                        return
+            else:
+                payload.pop("company_id", None)
+                payload.pop("role_id", None)
             req = RegisterUserRequest(
                 email=payload["email"],
                 password=payload["password"],
@@ -1244,6 +1307,18 @@ class HttpApiHandler(BaseHTTPRequestHandler):
     def _handle_login(self) -> None:
         try:
             payload = self._read_json()
+            if self.tenant_id is not None:
+                payload_company_id = payload.get("company_id")
+                if payload_company_id is not None:
+                    try:
+                        if int(payload_company_id) != self.tenant_id:
+                            self._send_error(HTTPStatus.BAD_REQUEST, "El inquilino no coincide con el cuerpo de la petición")
+                            return
+                    except (ValueError, TypeError):
+                        self._send_error(HTTPStatus.BAD_REQUEST, "El inquilino no coincide con el cuerpo de la petición")
+                        return
+                else:
+                    payload["company_id"] = self.tenant_id
             req = LoginRequest(
                 company_id=payload["company_id"],
                 email=payload["email"],
@@ -1290,6 +1365,18 @@ class HttpApiHandler(BaseHTTPRequestHandler):
     def _handle_logout(self) -> None:
         try:
             payload = self._read_json()
+            if self.tenant_id is not None:
+                payload_company_id = payload.get("company_id")
+                if payload_company_id is not None:
+                    try:
+                        if int(payload_company_id) != self.tenant_id:
+                            self._send_error(HTTPStatus.BAD_REQUEST, "El inquilino no coincide con el cuerpo de la petición")
+                            return
+                    except (ValueError, TypeError):
+                        self._send_error(HTTPStatus.BAD_REQUEST, "El inquilino no coincide con el cuerpo de la petición")
+                        return
+                else:
+                    payload["company_id"] = self.tenant_id
             req = LogoutRequest(
                 company_id=payload["company_id"],
                 refresh_token=payload["refresh_token"],
@@ -1319,6 +1406,18 @@ class HttpApiHandler(BaseHTTPRequestHandler):
     def _handle_resend_verification(self) -> None:
         try:
             payload = self._read_json()
+            if self.tenant_id is not None:
+                payload_company_id = payload.get("company_id")
+                if payload_company_id is not None:
+                    try:
+                        if int(payload_company_id) != self.tenant_id:
+                            self._send_error(HTTPStatus.BAD_REQUEST, "El inquilino no coincide con el cuerpo de la petición")
+                            return
+                    except (ValueError, TypeError):
+                        self._send_error(HTTPStatus.BAD_REQUEST, "El inquilino no coincide con el cuerpo de la petición")
+                        return
+                else:
+                    payload["company_id"] = self.tenant_id
             req = ResendVerificationEmailRequest(
                 company_id=payload["company_id"],
                 email=payload["email"],
@@ -1356,6 +1455,18 @@ class HttpApiHandler(BaseHTTPRequestHandler):
     def _handle_refresh(self) -> None:
         try:
             payload = self._read_json()
+            if self.tenant_id is not None:
+                payload_company_id = payload.get("company_id")
+                if payload_company_id is not None:
+                    try:
+                        if int(payload_company_id) != self.tenant_id:
+                            self._send_error(HTTPStatus.BAD_REQUEST, "El inquilino no coincide con el cuerpo de la petición")
+                            return
+                    except (ValueError, TypeError):
+                        self._send_error(HTTPStatus.BAD_REQUEST, "El inquilino no coincide con el cuerpo de la petición")
+                        return
+                else:
+                    payload["company_id"] = self.tenant_id
             req = RefreshAccessTokenRequest(
                 company_id=payload["company_id"],
                 refresh_token=payload["refresh_token"],
@@ -1501,6 +1612,14 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         try:
             params = parse_qs(query, keep_blank_values=True)
             company_id_raw = (params.get("company_id") or [None])[0]
+            if self.tenant_id is not None and company_id_raw is not None:
+                try:
+                    if int(company_id_raw) != self.tenant_id:
+                        self._send_error(HTTPStatus.BAD_REQUEST, "El inquilino no coincide con los parámetros de consulta")
+                        return
+                except (ValueError, TypeError):
+                    self._send_error(HTTPStatus.BAD_REQUEST, "El inquilino no coincide con los parámetros de consulta")
+                    return
             token_raw = (params.get("token") or [None])[0]
             req = VerifyEmailRequest(
                 company_id=(None if company_id_raw in (None, "") else int(company_id_raw)),
@@ -2131,10 +2250,22 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             self._send_error(HTTPStatus.UNAUTHORIZED, "No autorizado")
             return None
         try:
-            return verify_jwt_hs256(token, secret=self.jwt_secret)
+            payload = verify_jwt_hs256(token, secret=self.jwt_secret)
         except Exception:
             self._send_error(HTTPStatus.UNAUTHORIZED, "No autorizado")
             return None
+
+        if getattr(self, "tenant_id", None) is not None:
+            token_company_id = payload.get("company_id")
+            if token_company_id is not None:
+                try:
+                    if int(token_company_id) != self.tenant_id:
+                        self._send_error(HTTPStatus.FORBIDDEN, "Acceso denegado: el inquilino no coincide con el token")
+                        return None
+                except (ValueError, TypeError):
+                    self._send_error(HTTPStatus.FORBIDDEN, "Acceso denegado: el inquilino no coincide con el token")
+                    return None
+        return payload
 
     def _require_permissions(
         self,
