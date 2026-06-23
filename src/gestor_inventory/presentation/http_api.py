@@ -110,7 +110,7 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Origin", origin)
         else:
             self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         super().end_headers()
 
@@ -182,9 +182,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             self._handle_get_category(parsed.path)
             return
         if parsed.path.startswith("/api/admin/"):
-            self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": "Prohibido"})
+            self._send_error(HTTPStatus.FORBIDDEN, "Prohibido")
             return
-        self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+        self._send_error(HTTPStatus.NOT_FOUND, "No encontrado")
 
     def _handle_list_branches(self, query: str) -> None:
         try:
@@ -197,13 +197,13 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             status = (params.get("status") or [None])[0]
             res = list_branches(self.repo, ListBranchesRequest(company_id=company_id, city=city, status=status))
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         self._audit_data(
@@ -259,13 +259,13 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 ),
             )
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         self._audit_data(
@@ -333,13 +333,13 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 ),
             )
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         self._audit_data(
@@ -394,13 +394,13 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 status = None
             res = list_categories(self.repo, ListCategoriesRequest(company_id=company_id, status=status))
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         self._audit_data(
@@ -438,13 +438,13 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             per_page = int(per_page_raw)
             res = list_companies(self.repo, ListCompaniesRequest(page=page, per_page=per_page))
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         self._audit_data(
@@ -530,9 +530,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             self._handle_password_reset_confirm()
             return
         if self.path.startswith("/api/admin/"):
-            self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": "Prohibido"})
+            self._send_error(HTTPStatus.FORBIDDEN, "Prohibido")
             return
-        self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+        self._send_error(HTTPStatus.NOT_FOUND, "No encontrado")
 
     def do_PUT(self):
         if self.path.startswith("/api/users/"):
@@ -551,9 +551,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             self._handle_update_supplier(self.path)
             return
         if self.path.startswith("/api/admin/"):
-            self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": "Prohibido"})
+            self._send_error(HTTPStatus.FORBIDDEN, "Prohibido")
             return
-        self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+        self._send_error(HTTPStatus.NOT_FOUND, "No encontrado")
 
     def do_DELETE(self):
         if self.path.startswith("/api/users/"):
@@ -566,9 +566,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             self._handle_deactivate_supplier(self.path)
             return
         if self.path.startswith("/api/admin/"):
-            self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": "Prohibido"})
+            self._send_error(HTTPStatus.FORBIDDEN, "Prohibido")
             return
-        self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+        self._send_error(HTTPStatus.NOT_FOUND, "No encontrado")
 
     def do_PATCH(self):
         if self.path.startswith("/api/users/"):
@@ -578,9 +578,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             self._handle_set_company_default_branch()
             return
         if self.path.startswith("/api/admin/"):
-            self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": "Prohibido"})
+            self._send_error(HTTPStatus.FORBIDDEN, "Prohibido")
             return
-        self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+        self._send_error(HTTPStatus.NOT_FOUND, "No encontrado")
 
     def _handle_create_company(self) -> None:
         try:
@@ -597,19 +597,19 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 ),
             )
         except KeyError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except CompanyNameAlreadyExistsError:
-            self._send_json(HTTPStatus.CONFLICT, {"error": "company_name_exists"})
+            self._send_error(HTTPStatus.CONFLICT, "El nombre de la empresa ya existe")
             return
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except json.JSONDecodeError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "JSON inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         self._audit_data(
@@ -642,16 +642,16 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 SetCompanyDefaultBranchRequest(company_id=company_id, default_branch_id=default_branch_id),
             )
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except json.JSONDecodeError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "JSON inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         self._audit_data(
@@ -670,13 +670,13 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             company_id = int(authz.get("company_id"))
             res = get_company_settings(self.repo, GetCompanySettingsRequest(company_id=company_id))
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         self._send_json(
@@ -696,16 +696,16 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 UpdateCompanySettingsRequest(company_id=company_id, settings=payload),
             )
         except json.JSONDecodeError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "JSON inválido")
             return
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         self._audit_data(
@@ -734,16 +734,16 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 ),
             )
         except KeyError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except json.JSONDecodeError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "JSON inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         b = res.branch
@@ -788,25 +788,25 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             base_url = self._resolve_base_url()
             res = create_internal_user(self.repo, req, base_url=base_url)
         except KeyError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except ForbiddenError as e:
-            self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": str(e) or "Prohibido"})
+            self._send_error(HTTPStatus.FORBIDDEN, str(e) or "Prohibido")
             return
         except NotFoundError:
-            self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            self._send_error(HTTPStatus.NOT_FOUND, "No encontrado")
             return
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except EmailAlreadyExistsError:
-            self._send_json(HTTPStatus.CONFLICT, {"error": "email_already_exists"})
+            self._send_error(HTTPStatus.CONFLICT, "El correo electrónico ya existe")
             return
         except json.JSONDecodeError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "JSON inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         email_sent = self._try_send_verification_email(res.user.email, res.verification_url)
@@ -856,25 +856,25 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 ),
             )
         except NotFoundError:
-            self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            self._send_error(HTTPStatus.NOT_FOUND, "No encontrado")
             return
         except ForbiddenError as e:
-            self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": str(e) or "Prohibido"})
+            self._send_error(HTTPStatus.FORBIDDEN, str(e) or "Prohibido")
             return
         except EmailAlreadyExistsError:
-            self._send_json(HTTPStatus.CONFLICT, {"error": "email_already_exists"})
+            self._send_error(HTTPStatus.CONFLICT, "El correo electrónico ya existe")
             return
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except json.JSONDecodeError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "JSON inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         self._audit_data(
@@ -898,19 +898,19 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 DeleteUserRequest(company_id=company_id, actor_user_id=actor_user_id, user_id=user_id),
             )
         except NotFoundError:
-            self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            self._send_error(HTTPStatus.NOT_FOUND, "No encontrado")
             return
         except ForbiddenError as e:
-            self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": str(e) or "Prohibido"})
+            self._send_error(HTTPStatus.FORBIDDEN, str(e) or "Prohibido")
             return
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         self._audit_data(
@@ -942,19 +942,19 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 ),
             )
         except NotFoundError:
-            self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            self._send_error(HTTPStatus.NOT_FOUND, "No encontrado")
             return
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except json.JSONDecodeError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "JSON inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         b = res.branch
@@ -1006,40 +1006,37 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 ),
             )
         except NotFoundError:
-            self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            self._send_error(HTTPStatus.NOT_FOUND, "No encontrado")
             return
         except DuplicateSKUError:
-            self._send_json(
+            self._send_error(
                 HTTPStatus.BAD_REQUEST,
-                {
-                    "error": "duplicate_product_code",
-                    "message": "Ya existe un producto registrado con este SKU o código en tu empresa. Por favor, utiliza uno diferente.",
-                },
+                "Ya existe un producto registrado con este SKU o código en tu empresa. Por favor, utiliza uno diferente.",
             )
             return
         except DuplicateBarcodeError:
-            self._send_json(
+            self._send_error(
                 HTTPStatus.BAD_REQUEST,
-                {"error": "duplicate_barcode", "message": "Este código alterno ya está registrado."},
+                "Este código alterno ya está registrado.",
             )
             return
         except InvalidCategoryError:
-            self._send_json(
+            self._send_error(
                 HTTPStatus.BAD_REQUEST,
-                {"error": "invalid_category", "message": "La categoría no pertenece a esta empresa"},
+                "La categoría no pertenece a esta empresa",
             )
             return
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except json.JSONDecodeError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "JSON inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         p = res.product
@@ -1092,19 +1089,19 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 ),
             )
         except NotFoundError:
-            self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            self._send_error(HTTPStatus.NOT_FOUND, "No encontrado")
             return
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except json.JSONDecodeError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "JSON inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         s = res.supplier
@@ -1141,19 +1138,19 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             branch_id = int(raw_id)
             res = deactivate_branch(self.repo, DeactivateBranchRequest(company_id=company_id, branch_id=branch_id))
         except BranchHasInventoryError:
-            self._send_json(HTTPStatus.CONFLICT, {"error": "branch_has_inventory"})
+            self._send_error(HTTPStatus.CONFLICT, "La sucursal tiene inventario")
             return
         except NotFoundError:
-            self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            self._send_error(HTTPStatus.NOT_FOUND, "No encontrado")
             return
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         self._audit_data(
@@ -1176,16 +1173,16 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 self.repo, DeactivateSupplierRequest(company_id=company_id, supplier_id=supplier_id)
             )
         except NotFoundError:
-            self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            self._send_error(HTTPStatus.NOT_FOUND, "No encontrado")
             return
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         self._audit_data(
@@ -1209,22 +1206,22 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             base_url = self._resolve_base_url()
             res = register_user(self.repo, req, base_url=base_url)
         except KeyError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except CompanyNameAlreadyExistsError:
-            self._send_json(HTTPStatus.CONFLICT, {"error": "company_name_exists"})
+            self._send_error(HTTPStatus.CONFLICT, "El nombre de la empresa ya existe")
             return
         except EmailAlreadyExistsError:
-            self._send_json(HTTPStatus.CONFLICT, {"error": "email_already_exists"})
+            self._send_error(HTTPStatus.CONFLICT, "El correo electrónico ya existe")
             return
         except json.JSONDecodeError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "JSON inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         email_sent = self._try_send_verification_email(res.user.email, res.verification_url)
@@ -1253,7 +1250,7 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 password=payload["password"],
             )
             if not isinstance(self.jwt_secret, str) or not self.jwt_secret:
-                self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+                self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
                 return
             res = login_user(
                 self.repo,
@@ -1263,22 +1260,22 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 refresh_token_ttl_seconds=int(self.refresh_token_expiration_minutes) * 60,
             )
         except KeyError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except AccountNotVerifiedError:
-            self._send_json(
+            self._send_error(
                 HTTPStatus.FORBIDDEN,
-                {"error": "account_not_verified", "message": "Debes verificar tu cuenta antes de iniciar sesión"},
+                "Debes verificar tu cuenta antes de iniciar sesión",
             )
             return
         except (ValidationError, InvalidCredentialsError):
-            self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "invalid_credentials", "message": "Credenciales inválidas"})
+            self._send_error(HTTPStatus.UNAUTHORIZED, "Credenciales inválidas")
             return
         except json.JSONDecodeError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "JSON inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         self._send_json(
@@ -1299,22 +1296,22 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             )
             logout_user(self.repo, req)
         except KeyError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except RefreshTokenInvalidError:
-            self._send_json(
+            self._send_error(
                 HTTPStatus.UNAUTHORIZED,
-                {"error": "invalid_refresh_token", "message": "Refresh token inválido o expirado"},
+                "Refresh token inválido o expirado",
             )
             return
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except json.JSONDecodeError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "JSON inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         self._send_json(HTTPStatus.OK, {"status": "ok"})
@@ -1336,22 +1333,22 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 return
             self._send_verification_email(payload["email"], res.verification_url)
         except KeyError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except EmailDeliveryError as e:
-            self._send_json(
+            self._send_error(
                 HTTPStatus.BAD_GATEWAY,
-                {"error": "email_delivery_failed", "message": str(e) or "No fue posible enviar el correo"},
+                str(e) or "No fue posible enviar el correo",
             )
             return
         except json.JSONDecodeError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "JSON inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         self._send_json(HTTPStatus.OK, {"status": "ok", "sent": True})
@@ -1364,7 +1361,7 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 refresh_token=payload["refresh_token"],
             )
             if not isinstance(self.jwt_secret, str) or not self.jwt_secret:
-                self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+                self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
                 return
             res = refresh_access_token(
                 self.repo,
@@ -1374,22 +1371,22 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 refresh_token_ttl_seconds=int(self.refresh_token_expiration_minutes) * 60,
             )
         except KeyError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except RefreshTokenInvalidError:
-            self._send_json(
+            self._send_error(
                 HTTPStatus.UNAUTHORIZED,
-                {"error": "invalid_refresh_token", "message": "Refresh token inválido o expirado"},
+                "Refresh token inválido o expirado",
             )
             return
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except json.JSONDecodeError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "JSON inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         self._send_json(
@@ -1430,13 +1427,13 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 ListUsersRequest(company_id=company_id, page=page, per_page=per_page),
             )
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         self._audit_data(
@@ -1480,16 +1477,16 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             user_id = self._parse_user_id_from_path(path)
             res = get_user(self.repo, GetUserRequest(company_id=company_id, user_id=user_id))
         except NotFoundError:
-            self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            self._send_error(HTTPStatus.NOT_FOUND, "No encontrado")
             return
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         self._audit_data(
@@ -1511,13 +1508,13 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             )
             verify_email(self.repo, req)
         except (TypeError, ValueError, KeyError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         self._send_json(HTTPStatus.OK, {"status": "ok"})
@@ -1530,13 +1527,13 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             company_id = int(authz.get("company_id"))
             res = list_roles(self.repo, ListRolesRequest(company_id=company_id))
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         self._send_json(
@@ -1555,7 +1552,7 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 return
             res = list_permissions(self.repo)
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         self._send_json(
@@ -1586,16 +1583,16 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 return
             res = list_inventory(self.repo, ListInventoryRequest(company_id=company_id, branch_id=branch_id))
         except NotFoundError:
-            self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            self._send_error(HTTPStatus.NOT_FOUND, "No encontrado")
             return
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         self._audit_data(
@@ -1631,16 +1628,16 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             category_id = int(raw_id)
             res = get_category(self.repo, GetCategoryRequest(company_id=company_id, category_id=category_id))
         except NotFoundError:
-            self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found"})
+            self._send_error(HTTPStatus.NOT_FOUND, "No encontrado")
             return
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         c = res.category
@@ -1661,13 +1658,13 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             req = self._parse_sat_catalog_request(query)
             res = list_sat_regimenes_use_case(self.repo, req)
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         self._send_json(
@@ -1688,13 +1685,13 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             req = self._parse_sat_catalog_request(query)
             res = list_sat_unidades_use_case(self.repo, req)
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         self._send_json(
@@ -1715,13 +1712,13 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             req = self._parse_sat_catalog_request(query)
             res = list_sat_productos_use_case(self.repo, req)
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         self._send_json(
@@ -1750,19 +1747,19 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             company_id = int(authz.get("company_id"))
             res = create_category(self.repo, CreateCategoryRequest(company_id=company_id, name=payload["name"]))
         except KeyError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except json.JSONDecodeError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "JSON inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         c = res.category
@@ -1799,40 +1796,37 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 ),
             )
         except KeyError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except DuplicateSKUError:
-            self._send_json(
+            self._send_error(
                 HTTPStatus.BAD_REQUEST,
-                {
-                    "error": "duplicate_product_code",
-                    "message": "Ya existe un producto registrado con este SKU o código en tu empresa. Por favor, utiliza uno diferente.",
-                },
+                "Ya existe un producto registrado con este SKU o código en tu empresa. Por favor, utiliza uno diferente.",
             )
             return
         except DuplicateBarcodeError:
-            self._send_json(
+            self._send_error(
                 HTTPStatus.BAD_REQUEST,
-                {"error": "duplicate_barcode", "message": "Este código alterno ya está registrado."},
+                "Este código alterno ya está registrado.",
             )
             return
         except InvalidCategoryError:
-            self._send_json(
+            self._send_error(
                 HTTPStatus.BAD_REQUEST,
-                {"error": "invalid_category", "message": "La categoría no pertenece a esta empresa"},
+                "La categoría no pertenece a esta empresa",
             )
             return
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except json.JSONDecodeError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "JSON inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         p = res.product
@@ -1880,19 +1874,19 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 ),
             )
         except KeyError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except json.JSONDecodeError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "JSON inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         s = res.supplier
@@ -1932,25 +1926,25 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 CreatePurchaseOrderRequest(company_id=company_id, supplier_id=supplier_id),
             )
         except KeyError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except SupplierNotFoundError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "supplier_not_found"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Proveedor no encontrado")
             return
         except InvalidSupplierError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_supplier"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Proveedor inválido")
             return
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except json.JSONDecodeError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "JSON inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         po = res.purchase_order
@@ -1980,16 +1974,16 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             req = RequestPasswordResetRequest(company_id=payload["company_id"], email=payload["email"])
             res = request_password_reset(self.repo, req)
         except KeyError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except json.JSONDecodeError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "JSON inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         self._send_json(
@@ -2007,22 +2001,22 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             )
             reset_password(self.repo, req)
         except KeyError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except PasswordResetTokenExpiredError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "token_expired"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Token expirado")
             return
         except PasswordResetTokenInvalidError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_token"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Token inválido")
             return
         except json.JSONDecodeError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "JSON inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         self._send_json(HTTPStatus.OK, {"status": "ok"})
@@ -2042,25 +2036,25 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             )
             res = assign_user_role(self.repo, req)
         except KeyError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except ForbiddenError as e:
-            self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": str(e) or "Prohibido"})
+            self._send_error(HTTPStatus.FORBIDDEN, str(e) or "Prohibido")
             return
         except NotFoundError as e:
-            self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found", "message": str(e)})
+            self._send_error(HTTPStatus.NOT_FOUND, str(e))
             return
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except json.JSONDecodeError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "JSON inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         self._audit_data(
@@ -2089,25 +2083,25 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             )
             res = revoke_user_role(self.repo, req)
         except KeyError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except ForbiddenError as e:
-            self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": str(e) or "Prohibido"})
+            self._send_error(HTTPStatus.FORBIDDEN, str(e) or "Prohibido")
             return
         except NotFoundError as e:
-            self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found", "message": str(e)})
+            self._send_error(HTTPStatus.NOT_FOUND, str(e))
             return
         except ValidationError as e:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
             return
         except (TypeError, ValueError):
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
             return
         except json.JSONDecodeError:
-            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_json"})
+            self._send_error(HTTPStatus.BAD_REQUEST, "JSON inválido")
             return
         except Exception:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
         self._audit_data(
@@ -2126,20 +2120,20 @@ class HttpApiHandler(BaseHTTPRequestHandler):
 
     def _require_auth_payload(self) -> dict | None:
         if not isinstance(self.jwt_secret, str) or not self.jwt_secret:
-            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return None
         auth = self.headers.get("Authorization", "")
         if not isinstance(auth, str) or not auth.startswith("Bearer "):
-            self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized", "message": "No autorizado"})
+            self._send_error(HTTPStatus.UNAUTHORIZED, "No autorizado")
             return None
         token = auth.removeprefix("Bearer ").strip()
         if not token:
-            self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized", "message": "No autorizado"})
+            self._send_error(HTTPStatus.UNAUTHORIZED, "No autorizado")
             return None
         try:
             return verify_jwt_hs256(token, secret=self.jwt_secret)
         except Exception:
-            self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized", "message": "No autorizado"})
+            self._send_error(HTTPStatus.UNAUTHORIZED, "No autorizado")
             return None
 
     def _require_permissions(
@@ -2154,26 +2148,26 @@ class HttpApiHandler(BaseHTTPRequestHandler):
 
         token_company_id = payload.get("company_id")
         if not isinstance(token_company_id, int) or int(token_company_id) <= 0:
-            self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": "Prohibido"})
+            self._send_error(HTTPStatus.FORBIDDEN, "Prohibido")
             return None
         if company_id is not None and int(token_company_id) != int(company_id):
-            self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": "Prohibido"})
+            self._send_error(HTTPStatus.FORBIDDEN, "Prohibido")
             return None
 
         sub = payload.get("sub")
         try:
             actor_user_id = int(sub)
         except Exception:
-            self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": "Prohibido"})
+            self._send_error(HTTPStatus.FORBIDDEN, "Prohibido")
             return None
 
         if not hasattr(self.repo, "list_user_permission_codes"):
-            self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": "Prohibido"})
+            self._send_error(HTTPStatus.FORBIDDEN, "Prohibido")
             return None
 
         permissions = set(self.repo.list_user_permission_codes(company_id=int(token_company_id), user_id=actor_user_id))
         if required_permissions and not required_permissions.issubset(permissions):
-            self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": "Prohibido"})
+            self._send_error(HTTPStatus.FORBIDDEN, "Prohibido")
             return None
 
         return payload
@@ -2187,12 +2181,12 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         try:
             actor_branch_id = int(branch_claim)
         except Exception:
-            self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": "Acceso denegado a esta sucursal"})
+            self._send_error(HTTPStatus.FORBIDDEN, "Acceso denegado a esta sucursal")
             return False
         if actor_branch_id <= 0:
             return True
         if int(actor_branch_id) != int(target_branch_id):
-            self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden", "message": "Acceso denegado a esta sucursal"})
+            self._send_error(HTTPStatus.FORBIDDEN, "Acceso denegado a esta sucursal")
             return False
         return True
 
@@ -2265,6 +2259,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             return True
         except EmailDeliveryError:
             return False
+
+    def _send_error(self, status: HTTPStatus, error_message: str) -> None:
+        self._send_json(status, {"success": False, "error": error_message})
 
     def _send_json(self, status: HTTPStatus, body: dict) -> None:
         raw = json.dumps(body).encode("utf-8")
