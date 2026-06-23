@@ -89,6 +89,7 @@ from gestor_inventory.domain.errors import (
     PasswordResetTokenExpiredError,
     PasswordResetTokenInvalidError,
     RefreshTokenInvalidError,
+    SupplierNotFoundError,
     ValidationError,
 )
 from gestor_inventory.infrastructure.resend_email_sender import EmailDeliveryError, NoopVerificationEmailSender
@@ -1655,6 +1656,87 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         per_page_raw = (params.get("per_page") or ["50"])[0]
         return ListSatCatalogRequest(search=search, page=int(page_raw), per_page=int(per_page_raw))
 
+    def _handle_list_sat_regimenes(self, query: str) -> None:
+        try:
+            req = self._parse_sat_catalog_request(query)
+            res = list_sat_regimenes_use_case(self.repo, req)
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "data": [self._serialize_sat_catalog_item(item) for item in res.items],
+                "pagination": {
+                    "total": res.total,
+                    "page": res.page,
+                    "per_page": res.per_page,
+                    "pages": res.pages,
+                },
+            },
+        )
+
+    def _handle_list_sat_unidades(self, query: str) -> None:
+        try:
+            req = self._parse_sat_catalog_request(query)
+            res = list_sat_unidades_use_case(self.repo, req)
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "data": [self._serialize_sat_catalog_item(item) for item in res.items],
+                "pagination": {
+                    "total": res.total,
+                    "page": res.page,
+                    "per_page": res.per_page,
+                    "pages": res.pages,
+                },
+            },
+        )
+
+    def _handle_list_sat_productos(self, query: str) -> None:
+        try:
+            req = self._parse_sat_catalog_request(query)
+            res = list_sat_productos_use_case(self.repo, req)
+        except ValidationError as e:
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "validation_error", "message": str(e)})
+            return
+        except (TypeError, ValueError):
+            self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_payload"})
+            return
+        except Exception:
+            self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal_error"})
+            return
+
+        self._send_json(
+            HTTPStatus.OK,
+            {
+                "data": [self._serialize_sat_catalog_item(item) for item in res.items],
+                "pagination": {
+                    "total": res.total,
+                    "page": res.page,
+                    "per_page": res.per_page,
+                    "pages": res.pages,
+                },
+            },
+        )
+
     def _handle_create_category(self) -> None:
         try:
             payload = self._read_json()
@@ -2153,6 +2235,18 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             "verified": user.verified,
             "roles": user.roles,
         }
+
+    def _serialize_sat_catalog_item(self, item) -> dict:
+        data = {"clave": item.clave}
+        if hasattr(item, "descripcion"):
+            data["descripcion"] = item.descripcion
+        if hasattr(item, "nombre"):
+            data["nombre"] = item.nombre
+        if hasattr(item, "simbolo"):
+            data["simbolo"] = item.simbolo
+        if hasattr(item, "palabras_similares"):
+            data["palabras_similares"] = item.palabras_similares
+        return data
 
     def _resolve_base_url(self) -> str:
         configured = self.public_base_url
