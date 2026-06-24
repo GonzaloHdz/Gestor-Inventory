@@ -74,6 +74,9 @@ from gestor_inventory.application.update_branch import UpdateBranchRequest, upda
 from gestor_inventory.application.update_company_setting import UpdateCompanySettingsRequest, update_company_settings
 from gestor_inventory.application.update_product import UpdateProductRequest, update_product
 from gestor_inventory.application.verify_email import VerifyEmailRequest, verify_email
+from gestor_inventory.application.verify_company import VerifyCompanyRequest, verify_company
+from gestor_inventory.application.invite_employee import InviteEmployeeRequest, invite_employee
+from gestor_inventory.application.set_password import SetPasswordRequest, set_password
 from gestor_inventory.domain.errors import (
     AccountNotVerifiedError,
     BranchHasInventoryError,
@@ -88,6 +91,7 @@ from gestor_inventory.domain.errors import (
     NotFoundError,
     PasswordResetTokenExpiredError,
     PasswordResetTokenInvalidError,
+    CompanyNotVerifiedError,
     RefreshTokenInvalidError,
     SupplierNotFoundError,
     ValidationError,
@@ -197,6 +201,9 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/auth/verify-email":
             self._handle_verify_email(parsed.query)
+            return
+        if parsed.path == "/api/auth/verify-company":
+            self._handle_verify_company(parsed.query)
             return
         if parsed.path == "/api/inventory":
             self._handle_list_inventory(parsed.query)
@@ -586,6 +593,12 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/auth/password-reset/confirm":
             self._handle_password_reset_confirm()
+            return
+        if self.path == "/api/employees/invite":
+            self._handle_invite_employee()
+            return
+        if self.path == "/api/auth/set-password":
+            self._handle_set_password()
             return
         if self.path.startswith("/api/admin/"):
             self._send_error(HTTPStatus.FORBIDDEN, "Prohibido")
@@ -1301,22 +1314,49 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
-        email_sent = self._try_send_verification_email(res.user.email, res.verification_url)
+        html_body = f"""
+<html>
+  <body style="font-family: Arial, sans-serif; color: #1f2937; line-height: 1.5;">
+    <h2>Verifica la cuenta de tu empresa</h2>
+    <p>Por favor, haz clic en el siguiente enlace para verificar la cuenta de tu empresa:</p>
+    <p>
+      <a href="{res.verification_url}" style="display: inline-block; padding: 12px 18px; background: #2563eb; color: #ffffff; text-decoration: none; border-radius: 6px;">
+        Verificar Empresa
+      </a>
+    </p>
+    <p>Si el botón no funciona, copia y pega este enlace en tu navegador:</p>
+    <p><a href="{res.verification_url}">{res.verification_url}</a></p>
+  </body>
+</html>
+""".strip()
 
-        self._send_json(
-            HTTPStatus.CREATED,
-            {
-                "id": res.user.id,
-                "company_id": res.company.id,
-                "company_name": res.company.name,
-                "email": res.user.email,
-                "is_active": res.user.is_active,
-                "verified": res.user.verified,
-                "role_id": res.role_id,
-                "verification_url": res.verification_url,
-                "verification_email_sent": email_sent,
-            },
-        )
+        email_sent = False
+        if not getattr(self, "demo_mode", False):
+            try:
+                self.email_sender.send_email(
+                    to_email=res.user.email,
+                    subject="Verifica la cuenta de tu empresa",
+                    html_body=html_body
+                )
+                email_sent = True
+            except Exception:
+                email_sent = False
+
+        response_data = {
+            "id": res.user.id,
+            "company_id": res.company.id,
+            "company_name": res.company.name,
+            "email": res.user.email,
+            "is_active": res.user.is_active,
+            "verified": res.user.verified,
+            "role_id": res.role_id,
+            "verification_url": res.verification_url,
+            "verification_email_sent": email_sent,
+        }
+        if getattr(self, "demo_mode", False):
+            response_data["demo_company_token"] = res.company.verification_token
+
+        self._send_json(HTTPStatus.CREATED, response_data)
 
     def _handle_login(self) -> None:
         try:
@@ -1373,6 +1413,12 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             self._send_error(
                 HTTPStatus.FORBIDDEN,
                 "Debes verificar tu cuenta antes de iniciar sesión",
+            )
+            return
+        except CompanyNotVerifiedError:
+            self._send_error(
+                HTTPStatus.FORBIDDEN,
+                "Company not verified. Please check your email.",
             )
             return
         except (ValidationError, InvalidCredentialsError):
@@ -1669,6 +1715,139 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             return
 
         self._send_json(HTTPStatus.OK, {"status": "ok"})
+
+    def _handle_verify_company(self, query: str) -> None:
+        try:
+            params = parse_qs(query, keep_blank_values=True)
+            token = (params.get("token") or [None])[0]
+            if not token:
+                self._send_error(HTTPStatus.BAD_REQUEST, "Token inválido o empresa no encontrada.")
+                return
+            req = VerifyCompanyRequest(token=token)
+            verify_company(self.repo, req)
+        except ValidationError as e:
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
+            return
+        except Exception:
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
+            return
+
+        self._send_json(
+            HTTPStatus.OK,
+            {"status": "ok", "message": "Empresa verificada exitosamente."},
+        )
+
+    def _handle_invite_employee(self) -> None:
+        authz = self._require_permissions({"usuarios:crear"})
+        if authz is None:
+            return
+
+        admin_company_id = int(authz.get("company_id"))
+
+        try:
+            payload = self._read_json()
+            email = payload.get("email")
+            role = payload.get("role", "employee")
+
+            if not email:
+                self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
+                return
+
+            req = InviteEmployeeRequest(
+                admin_company_id=admin_company_id,
+                email=email,
+                role=role,
+            )
+            base_url = self._resolve_base_url()
+            res = invite_employee(self.repo, req, base_url=base_url)
+        except KeyError:
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
+            return
+        except ValidationError as e:
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
+            return
+        except EmailAlreadyExistsError:
+            self._send_error(HTTPStatus.CONFLICT, "El correo electrónico ya existe")
+            return
+        except json.JSONDecodeError:
+            self._send_error(HTTPStatus.BAD_REQUEST, "JSON inválido")
+            return
+        except Exception:
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
+            return
+
+        html_body = f"""
+<html>
+  <body style="font-family: Arial, sans-serif; color: #1f2937; line-height: 1.5;">
+    <h2>Invitación a unirte a {res.company_name}</h2>
+    <p>Has sido invitado a unirte a <strong>{res.company_name}</strong> en SaaS Inventarios.</p>
+    <p>Por favor, haz clic en el siguiente enlace para establecer tu contraseña y activar tu cuenta:</p>
+    <p>
+      <a href="{res.verification_url}" style="display: inline-block; padding: 12px 18px; background: #2563eb; color: #ffffff; text-decoration: none; border-radius: 6px;">
+        Establecer Contraseña
+      </a>
+    </p>
+    <p>Si el botón no funciona, copia y pega este enlace en tu navegador:</p>
+    <p><a href="{res.verification_url}">{res.verification_url}</a></p>
+  </body>
+</html>
+""".strip()
+
+        email_sent = False
+        if not getattr(self, "demo_mode", False):
+            try:
+                from_override = f'"{res.company_name} via SaaS Inventarios" <{self.email_sender._from_email}>'
+                self.email_sender.send_email(
+                    to_email=res.user.email,
+                    subject=f"Has sido invitado a unirte a {res.company_name}",
+                    html_body=html_body,
+                    from_override=from_override
+                )
+                email_sent = True
+            except Exception:
+                email_sent = False
+
+        response_data = {
+            "status": "ok",
+            "message": "Invitación creada.",
+        }
+        if getattr(self, "demo_mode", False):
+            response_data["demo_token"] = res.verification_token
+
+        self._send_json(HTTPStatus.OK, response_data)
+
+    def _handle_set_password(self) -> None:
+        try:
+            payload = self._read_json()
+            token = payload.get("token")
+            new_password = payload.get("new_password")
+
+            if not token or not new_password:
+                self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
+                return
+
+            req = SetPasswordRequest(
+                token=token,
+                new_password=new_password,
+            )
+            set_password(self.repo, req)
+        except KeyError:
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
+            return
+        except ValidationError as e:
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
+            return
+        except json.JSONDecodeError:
+            self._send_error(HTTPStatus.BAD_REQUEST, "JSON inválido")
+            return
+        except Exception:
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
+            return
+
+        self._send_json(
+            HTTPStatus.OK,
+            {"status": "ok", "message": "Contraseña establecida correctamente. Ya puedes iniciar sesión."},
+        )
 
     def _handle_list_roles(self) -> None:
         try:

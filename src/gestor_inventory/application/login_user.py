@@ -5,13 +5,16 @@ import secrets
 import time
 from typing import Protocol
 
-from gestor_inventory.domain.errors import AccountNotVerifiedError, InvalidCredentialsError, ValidationError
+from gestor_inventory.domain.errors import AccountNotVerifiedError, InvalidCredentialsError, ValidationError, CompanyNotVerifiedError
+from gestor_inventory.domain.company import Company
 from gestor_inventory.security.jwt import create_jwt_hs256
 from gestor_inventory.security.password_hash import verify_password
 
 
 class UserAuthRepository(Protocol):
     def get_user_for_login(self, *, company_id: int, email: str) -> dict | None: ...
+
+    def get_company_by_id(self, *, company_id: int) -> Company | None: ...
 
     def create_refresh_token(
         self,
@@ -99,6 +102,20 @@ def login_user(
         raise InvalidCredentialsError()
 
     user_id = user.get("id")
+
+    # Obtain user's company and verify it is verified
+    company = repo.get_company_by_id(company_id=company_id)
+    if company is None or company.is_verified == 0:
+        repo.create_audit_log(
+            company_id=company_id,
+            branch_id=None,
+            user_id=int(user_id) if isinstance(user_id, int) else None,
+            event_type="auth.login_attempt",
+            created_at=now_v,
+            metadata_json=json.dumps({"success": False, "email": email, "reason": "company_not_verified"}, separators=(",", ":")),
+        )
+        raise CompanyNotVerifiedError()
+
     if not bool(user.get("verified", False)):
         repo.create_audit_log(
             company_id=company_id,

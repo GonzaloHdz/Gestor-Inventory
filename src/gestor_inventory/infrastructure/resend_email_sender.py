@@ -9,15 +9,22 @@ class EmailDeliveryError(Exception):
 
 class VerificationEmailSender(Protocol):
     def send_verification_email(self, *, to_email: str, verification_url: str) -> None: ...
+    def send_email(self, *, to_email: str, subject: str, html_body: str, from_override: str | None = None) -> None: ...
 
 
 class NoopVerificationEmailSender:
     def send_verification_email(self, *, to_email: str, verification_url: str) -> None:
         return
 
+    def send_email(self, *, to_email: str, subject: str, html_body: str, from_override: str | None = None) -> None:
+        return
+
 
 class UnavailableVerificationEmailSender:
     def send_verification_email(self, *, to_email: str, verification_url: str) -> None:
+        raise EmailDeliveryError("Servicio de correo no configurado")
+
+    def send_email(self, *, to_email: str, subject: str, html_body: str, from_override: str | None = None) -> None:
         raise EmailDeliveryError("Servicio de correo no configurado")
 
 
@@ -38,6 +45,37 @@ class ResendVerificationEmailSender:
             raise ValueError("api_key inválido")
         if not self._from_email:
             raise ValueError("from_email inválido")
+
+    def send_email(self, *, to_email: str, subject: str, html_body: str, from_override: str | None = None) -> None:
+        payload = {
+            "from": from_override or self._from_email,
+            "to": [str(to_email)],
+            "subject": subject,
+            "html": html_body,
+        }
+        if self._reply_to is not None:
+            payload["reply_to"] = self._reply_to
+
+        raw = json.dumps(payload).encode("utf-8")
+        req = request.Request(
+            "https://api.resend.com/emails",
+            data=raw,
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "Content-Type": "application/json",
+            },
+        )
+        try:
+            with request.urlopen(req, timeout=10) as resp:
+                status = int(getattr(resp, "status", 200))
+                if status < 200 or status >= 300:
+                    raise EmailDeliveryError("Respuesta inválida del proveedor de correo")
+        except error.HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace")
+            raise EmailDeliveryError(f"Resend devolvió HTTP {exc.code}: {body}") from exc
+        except error.URLError as exc:
+            raise EmailDeliveryError("No fue posible conectar con Resend") from exc
 
     def send_verification_email(self, *, to_email: str, verification_url: str) -> None:
         payload = {
@@ -90,3 +128,38 @@ def _build_verification_html(*, app_name: str, verification_url: str) -> str:
   </body>
 </html>
 """.strip()
+
+
+def send_email_via_resend(*, to: str, subject: str, body: str, from_override: str | None = None) -> None:
+    import os
+    api_key = os.environ.get("GI_RESEND_API_KEY", "").strip()
+    from_email = from_override or os.environ.get("GI_EMAIL_FROM", "").strip()
+    if not api_key or not from_email:
+        raise EmailDeliveryError("Servicio de correo no configurado")
+
+    payload = {
+        "from": from_email,
+        "to": [str(to)],
+        "subject": subject,
+        "html": body,
+    }
+    raw = json.dumps(payload).encode("utf-8")
+    req = request.Request(
+        "https://api.resend.com/emails",
+        data=raw,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with request.urlopen(req, timeout=10) as resp:
+            status = int(getattr(resp, "status", 200))
+            if status < 200 or status >= 300:
+                raise EmailDeliveryError("Respuesta inválida del proveedor de correo")
+    except error.HTTPError as exc:
+        body_err = exc.read().decode("utf-8", errors="replace")
+        raise EmailDeliveryError(f"Resend devolvió HTTP {exc.code}: {body_err}") from exc
+    except error.URLError as exc:
+        raise EmailDeliveryError("No fue posible conectar con Resend") from exc

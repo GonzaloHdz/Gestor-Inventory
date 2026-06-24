@@ -3,6 +3,7 @@ import hashlib
 import secrets
 import time
 from typing import Protocol
+import uuid
 
 from gestor_inventory.domain.company import Company
 from gestor_inventory.domain.errors import CompanyNameAlreadyExistsError, EmailAlreadyExistsError, ValidationError
@@ -15,7 +16,16 @@ from gestor_inventory.application.verification_links import build_verification_u
 class UserRepository(Protocol):
     def company_name_exists(self, *, name: str) -> bool: ...
 
-    def create_company(self, *, name: str, currency: str, timezone: str, created_at: int) -> Company: ...
+    def create_company(
+        self,
+        *,
+        name: str,
+        currency: str,
+        timezone: str,
+        created_at: int,
+        verification_token: str | None = None,
+        is_verified: int = 0,
+    ) -> Company: ...
 
     def email_exists(self, *, company_id: int, email: str) -> bool: ...
 
@@ -26,17 +36,8 @@ class UserRepository(Protocol):
         email: str,
         password_hash: str,
         role_id: int,
+        verification_token: str | None = None,
     ) -> tuple[User, int]: ...
-
-    def create_email_verification_token(
-        self,
-        *,
-        company_id: int,
-        user_id: int,
-        token_hash: str,
-        expires_at: int,
-        created_at: int,
-    ) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -63,7 +64,6 @@ def register_user(
     repo: UserRepository,
     req: RegisterUserRequest,
     *,
-    verification_token_ttl_seconds: int = 24 * 60 * 60,
     base_url: str = "https://example.com",
     now: int | None = None,
 ) -> RegisterUserResponse:
@@ -74,7 +74,15 @@ def register_user(
     timezone = _validate_timezone(req.timezone)
     now_v = int(time.time()) if now is None else int(now)
 
-    company = repo.create_company(name=company_name, currency=currency, timezone=timezone, created_at=now_v)
+    verification_token = str(uuid.uuid4())
+    company = repo.create_company(
+        name=company_name,
+        currency=currency,
+        timezone=timezone,
+        created_at=now_v,
+        verification_token=verification_token,
+        is_verified=0,
+    )
     company_id = int(company.id)
     if repo.email_exists(company_id=company_id, email=email):
         raise EmailAlreadyExistsError()
@@ -87,17 +95,7 @@ def register_user(
         role_id=OWNER_ROLE_ID,
     )
 
-    token = secrets.token_urlsafe(32)
-    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
-    expires_at = now_v + int(verification_token_ttl_seconds)
-    repo.create_email_verification_token(
-        company_id=company_id,
-        user_id=int(user.id),
-        token_hash=token_hash,
-        expires_at=expires_at,
-        created_at=now_v,
-    )
-    verification_url = build_verification_url(base_url=base_url, company_id=company_id, raw_token=token)
+    verification_url = f"{base_url.rstrip('/')}/verify-company?token={verification_token}"
     return RegisterUserResponse(company=company, user=user, role_id=role_id, verification_url=verification_url)
 
 

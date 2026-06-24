@@ -35,6 +35,9 @@ def main() -> None:
     reply_to = os.environ.get("GI_EMAIL_REPLY_TO")
     public_base_url = os.environ.get("GI_PUBLIC_BASE_URL")
 
+    from gestor_inventory import config
+    config.DEMO_MODE = os.environ.get("DEMO_MODE", "false").lower() == "true"
+
     if resend_api_key and from_email:
         email_sender = ResendVerificationEmailSender(
             api_key=resend_api_key,
@@ -50,6 +53,7 @@ def main() -> None:
     HttpApiHandler.refresh_token_expiration_minutes = refresh_token_expiration_minutes
     HttpApiHandler.email_sender = email_sender
     HttpApiHandler.public_base_url = public_base_url
+    HttpApiHandler.demo_mode = config.DEMO_MODE
     server = ThreadingHTTPServer((host, port), HttpApiHandler)
     server.serve_forever()
 

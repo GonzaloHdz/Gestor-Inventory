@@ -18,36 +18,61 @@ class VerifyEmailTests(unittest.TestCase):
         self.repo = SqliteUserRepository(":memory:")
 
     def test_verify_email_happy_path_marks_user_verified(self):
-        reg = register_user(
-            self.repo,
-            RegisterUserRequest(email="user@example.com", password="Secret1!", company_name="Verify One"),
-            now=1_000_000,
+        company = self.repo.create_company(name="Verify One", currency="USD", timezone="UTC", created_at=1_000_000)
+        user, _ = self.repo.create_user_with_role(
+            company_id=company.id,
+            email="user@example.com",
+            password_hash="some-hash",
+            role_id=12,
         )
-        parsed = urlparse(reg.verification_url)
-        token = parse_qs(parsed.query)["token"][0]
+        import secrets
+        import hashlib
+        token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        self.repo.create_email_verification_token(
+            company_id=company.id,
+            user_id=user.id,
+            token_hash=token_hash,
+            expires_at=1_000_020,
+            created_at=1_000_000,
+        )
+        from gestor_inventory.application.verification_links import build_verification_url
+        url = build_verification_url(base_url="https://example.com", company_id=company.id, raw_token=token)
+        parsed = urlparse(url)
+        combined_token = parse_qs(parsed.query)["token"][0]
 
-        verify_email(self.repo, VerifyEmailRequest(token=token), now=1_000_010)
+        verify_email(self.repo, VerifyEmailRequest(token=combined_token), now=1_000_010)
 
-        user = self.repo.get_user_for_login(company_id=reg.company.id, email="user@example.com")
-        self.assertIsNotNone(user)
-        self.assertTrue(user["verified"])
+        user_db = self.repo.get_user_for_login(company_id=company.id, email="user@example.com")
+        self.assertIsNotNone(user_db)
+        self.assertTrue(user_db["verified"])
 
     def test_verify_email_old_format_is_isolated_by_company(self):
-        reg = register_user(
-            self.repo,
-            RegisterUserRequest(email="user@example.com", password="Secret1!", company_name="Verify Two"),
-            now=1_000_000,
+        company = self.repo.create_company(name="Verify Two", currency="USD", timezone="UTC", created_at=1_000_000)
+        user, _ = self.repo.create_user_with_role(
+            company_id=company.id,
+            email="user@example.com",
+            password_hash="some-hash",
+            role_id=12,
         )
-        parsed = urlparse(reg.verification_url)
-        token = parse_qs(parsed.query)["token"][0]
-        raw_token = token.split(".", 1)[1]
+        import secrets
+        import hashlib
+        token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        self.repo.create_email_verification_token(
+            company_id=company.id,
+            user_id=user.id,
+            token_hash=token_hash,
+            expires_at=1_000_020,
+            created_at=1_000_000,
+        )
 
         with self.assertRaises(ValidationError):
-            verify_email(self.repo, VerifyEmailRequest(company_id=reg.company.id + 1, token=raw_token), now=1_000_010)
+            verify_email(self.repo, VerifyEmailRequest(company_id=company.id + 1, token=token), now=1_000_010)
 
-        user = self.repo.get_user_for_login(company_id=reg.company.id, email="user@example.com")
-        self.assertIsNotNone(user)
-        self.assertFalse(user["verified"])
+        user_db = self.repo.get_user_for_login(company_id=company.id, email="user@example.com")
+        self.assertIsNotNone(user_db)
+        self.assertFalse(user_db["verified"])
 
 
 if __name__ == "__main__":

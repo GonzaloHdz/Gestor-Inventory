@@ -12,6 +12,8 @@ class Company:
     status: str
     default_branch_id: int | None
     created_at: int
+    verification_token: str | None = None
+    is_verified: int = 0
 
 
 ALLOWED_COMPANY_SETTING_KEYS = {"moneda", "stock_minimo", "notificaciones_activas"}
