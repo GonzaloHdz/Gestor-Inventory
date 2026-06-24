@@ -1744,6 +1744,14 @@ class SqliteUserRepository:
                 for (setting_id, company_id_v, setting_key, setting_value, created_at, updated_at) in rows
             ]
 
+    def get_company_name(self, *, company_id: int) -> str | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT name FROM companies WHERE id = ? LIMIT 1",
+                (int(company_id),),
+            ).fetchone()
+            return str(row[0]) if row else None
+
     def upsert_company_setting(self, *, company_id: int, setting_key: str, setting_value: str, now: int) -> None:
         with self._connect() as conn:
             conn.execute(

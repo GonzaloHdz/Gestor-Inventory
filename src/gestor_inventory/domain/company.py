@@ -14,7 +14,16 @@ class Company:
     created_at: int
 
 
-ALLOWED_COMPANY_SETTING_KEYS = {"moneda", "stock_minimo", "notificaciones_activas"}
+ALLOWED_COMPANY_SETTING_KEYS = {
+    "moneda",
+    "stock_minimo",
+    "notificaciones_activas",
+    "company_name",
+    "primary_color",
+    "secondary_color",
+    "accent_color",
+    "logo_url",
+}
 
 
 def normalize_company_setting_value(*, setting_key: str, raw_value: object) -> str:
@@ -46,5 +55,23 @@ def normalize_company_setting_value(*, setting_key: str, raw_value: object) -> s
             if v in ("true", "false"):
                 return v
         raise ValidationError("notificaciones_activas debe ser booleano")
+
+    if setting_key == "company_name":
+        if not isinstance(raw_value, str):
+            raise ValidationError("company_name debe ser un string")
+        v = raw_value.strip()
+        if not v:
+            raise ValidationError("company_name no puede estar vacío")
+        return v
+
+    if setting_key in ("primary_color", "secondary_color", "accent_color"):
+        if not isinstance(raw_value, str):
+            raise ValidationError(f"{setting_key} debe ser un string")
+        return raw_value.strip()
+
+    if setting_key == "logo_url":
+        if not isinstance(raw_value, str):
+            raise ValidationError("logo_url debe ser un string")
+        return raw_value.strip()
 
     raise ValidationError(f"Llave de configuración no permitida: {setting_key}")
