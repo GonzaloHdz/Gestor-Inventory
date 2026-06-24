@@ -1385,12 +1385,26 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error interno")
             return
 
+        roles = []
+        permissions = []
+        if hasattr(self.repo, "list_user_role_names") and hasattr(self.repo, "list_user_permission_codes"):
+            roles = self.repo.list_user_role_names(company_id=res.company_id, user_id=res.user_id)
+            permissions = self.repo.list_user_permission_codes(company_id=res.company_id, user_id=res.user_id)
+            
+        main_role = roles[0] if roles else None
+
         self._send_json(
             HTTPStatus.OK,
             {
                 "access_token": res.access_token,
                 "refresh_token": res.refresh_token,
                 "token_type": "bearer",
+                "token": res.access_token,
+                "user": {
+                    "id": res.user_id,
+                    "role": main_role,
+                    "permissions": permissions,
+                }
             },
         )
 
@@ -1545,6 +1559,23 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         payload = self._require_auth_payload()
         if payload is None:
             return
+        user_id_raw = payload.get("sub")
+        company_id_raw = payload.get("company_id")
+        
+        roles = []
+        permissions = []
+        if user_id_raw is not None and company_id_raw is not None:
+            try:
+                user_id = int(user_id_raw)
+                company_id = int(company_id_raw)
+                if hasattr(self.repo, "list_user_role_names") and hasattr(self.repo, "list_user_permission_codes"):
+                    roles = self.repo.list_user_role_names(company_id=company_id, user_id=user_id)
+                    permissions = self.repo.list_user_permission_codes(company_id=company_id, user_id=user_id)
+            except (ValueError, TypeError):
+                pass
+                
+        main_role = roles[0] if roles else None
+
         self._send_json(
             HTTPStatus.OK,
             {
@@ -1553,6 +1584,11 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 "email": payload.get("email"),
                 "iat": payload.get("iat"),
                 "exp": payload.get("exp"),
+                "user": {
+                    "id": int(user_id_raw) if user_id_raw else None,
+                    "role": main_role,
+                    "permissions": permissions,
+                }
             },
         )
 

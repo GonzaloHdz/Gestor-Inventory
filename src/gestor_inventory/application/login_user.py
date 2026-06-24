@@ -46,6 +46,9 @@ class LoginRequest:
 class LoginResponse:
     access_token: str
     refresh_token: str
+    user_id: int
+    company_id: int
+    email: str
 
 
 def login_user(
@@ -131,7 +134,13 @@ def login_user(
         created_at=now_v,
         metadata_json=json.dumps({"success": True, "email": email}, separators=(",", ":")),
     )
-    return LoginResponse(access_token=token, refresh_token=refresh_token)
+    return LoginResponse(
+        access_token=token,
+        refresh_token=refresh_token,
+        user_id=int(user_id),
+        company_id=company_id,
+        email=email,
+    )
 
 
 def _validate_company_id(company_id: int) -> int:
