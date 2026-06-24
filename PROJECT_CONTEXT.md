@@ -1,4 +1,4 @@
-Resumen técnico ejecutivo
+Resumen técnico ejecutivo V.2
 ========================
 
 Arquitectura recomendada
