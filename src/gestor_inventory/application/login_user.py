@@ -13,6 +13,8 @@ from gestor_inventory.security.password_hash import verify_password
 
 class UserAuthRepository(Protocol):
     def get_user_for_login(self, *, company_id: int, email: str) -> dict | None: ...
+    def get_company_settings(self, *, company_id: int) -> list: ...
+    def get_company_name(self, *, company_id: int) -> str | None: ...
 
     def get_company_by_id(self, *, company_id: int) -> Company | None: ...
 
@@ -52,6 +54,7 @@ class LoginResponse:
     user_id: int
     company_id: int
     email: str
+    settings: dict
 
 
 def login_user(
@@ -151,12 +154,28 @@ def login_user(
         created_at=now_v,
         metadata_json=json.dumps({"success": True, "email": email}, separators=(",", ":")),
     )
+    db_settings = repo.get_company_settings(company_id=company_id)
+    settings_dict = {s.setting_key: s.setting_value for s in db_settings}
+
+    company_name = settings_dict.get("company_name")
+    if not company_name:
+        company_name = repo.get_company_name(company_id=company_id) or ""
+
+    settings_res = {
+        "company_name": company_name,
+        "primary_color": settings_dict.get("primary_color", ""),
+        "secondary_color": settings_dict.get("secondary_color", ""),
+        "accent_color": settings_dict.get("accent_color", ""),
+        "logo_url": settings_dict.get("logo_url", ""),
+    }
+
     return LoginResponse(
         access_token=token,
         refresh_token=refresh_token,
         user_id=int(user_id),
         company_id=company_id,
         email=email,
+        settings=settings_res,
     )
 
 

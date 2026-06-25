@@ -1,4 +1,7 @@
+import cgi
 import json
+import os
+import struct
 import time
 from urllib.parse import parse_qs, urlparse
 from http import HTTPStatus
@@ -161,9 +164,13 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         )
 
     def do_GET(self):
+        parsed = urlparse(self.path)
+        if parsed.path.startswith("/uploads/"):
+            self._handle_serve_uploaded_file(parsed.path)
+            return
+
         if not self._preprocess_tenant():
             return
-        parsed = urlparse(self.path)
         if parsed.path == "/api/companies/branding":
             self._handle_get_public_branding()
             return
@@ -767,10 +774,86 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             if authz is None:
                 return
             company_id = int(authz.get("company_id"))
-            payload = self._read_json()
+
+            content_type = self.headers.get("Content-Type", "")
+            if content_type.startswith("multipart/form-data"):
+                form = cgi.FieldStorage(
+                    fp=self.rfile,
+                    headers=self.headers,
+                    environ={
+                        "REQUEST_METHOD": self.command,
+                        "CONTENT_TYPE": content_type,
+                    }
+                )
+                
+                settings_payload = {}
+                for key in form.keys():
+                    if key == "logo":
+                        continue
+                    val = form.getfirst(key)
+                    if val is not None:
+                        settings_payload[key] = val
+
+                logo_url = None
+                logo_item = form["logo"] if "logo" in form else None
+                if isinstance(logo_item, list):
+                    logo_item = logo_item[0]
+
+                if logo_item is not None and hasattr(logo_item, "file") and logo_item.filename:
+                    logo_data = logo_item.file.read()
+                    logo_content_type = logo_item.type
+                    
+                    if logo_data:
+                        if len(logo_data) > 2 * 1024 * 1024:
+                            raise ValidationError("El archivo de logo no debe exceder los 2 MB")
+                        
+                        if logo_content_type not in ("image/png", "image/jpeg", "image/jpg"):
+                            raise ValidationError("El formato del logo debe ser PNG o JPEG")
+                        
+                        is_png = logo_data.startswith(b'\x89PNG\r\n\x1a\n')
+                        is_jpeg = logo_data.startswith(b'\xff\xd8')
+                        if not (is_png or is_jpeg):
+                            raise ValidationError("El archivo no es una imagen PNG o JPEG válida")
+                        
+                        width, height = None, None
+                        if is_png:
+                            try:
+                                width, height = struct.unpack('>II', logo_data[16:24])
+                            except Exception:
+                                raise ValidationError("Error al leer las dimensiones de la imagen PNG")
+                        elif is_jpeg:
+                            try:
+                                width_height = _get_jpeg_size(logo_data)
+                                if width_height:
+                                    width, height = width_height
+                            except Exception:
+                                raise ValidationError("Error al leer las dimensiones de la imagen JPEG")
+                        
+                        if width is not None and height is not None:
+                            if width > 500 or height > 500:
+                                raise ValidationError("Las dimensiones de la imagen no deben exceder 500x500 píxeles")
+
+                        uploads_dir = os.environ.get("GI_UPLOADS_DIR", "uploads")
+                        logos_dir = os.path.join(uploads_dir, "logos")
+                        os.makedirs(logos_dir, exist_ok=True)
+                        
+                        ext = ".png" if is_png else ".jpg"
+                        filename = f"{company_id}{ext}"
+                        logo_filepath = os.path.join(logos_dir, filename)
+                        
+                        with open(logo_filepath, "wb") as f:
+                            f.write(logo_data)
+                        
+                        base_url = self._resolve_base_url()
+                        logo_url = f"{base_url}/uploads/logos/{filename}"
+                        settings_payload["logo_url"] = logo_url
+            else:
+                payload = self._read_json()
+                settings_payload = payload.get("settings") if isinstance(payload, dict) and "settings" in payload else payload
+
             update_company_settings(
                 self.repo,
-                UpdateCompanySettingsRequest(company_id=company_id, settings=payload),
+                UpdateCompanySettingsRequest(company_id=company_id, settings=settings_payload),
             )
         except json.JSONDecodeError:
             self._send_error(HTTPStatus.BAD_REQUEST, "JSON inválido")
@@ -789,7 +872,7 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             authz,
             action="UPDATE",
             resource="configuracion",
-            details=json.dumps({"keys": sorted(list(payload.keys()))}, ensure_ascii=False, separators=(",", ":")),
+            details=json.dumps({"keys": sorted(list(settings_payload.keys()))}, ensure_ascii=False, separators=(",", ":")),
         )
         self._send_json(HTTPStatus.OK, {"status": "ok"})
 
@@ -1450,7 +1533,8 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                     "id": res.user_id,
                     "role": main_role,
                     "permissions": permissions,
-                }
+                },
+                "settings": res.settings,
             },
         )
 
@@ -2884,3 +2968,58 @@ class HttpApiHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(raw)))
         self.end_headers()
         self.wfile.write(raw)
+
+    def _handle_serve_uploaded_file(self, path: str) -> None:
+        suffix = path.removeprefix("/uploads/")
+        suffix = os.path.normpath(suffix).lstrip(os.path.sep)
+        
+        uploads_dir = os.environ.get("GI_UPLOADS_DIR", "uploads")
+        file_path = os.path.abspath(os.path.join(uploads_dir, suffix))
+        
+        abs_uploads_dir = os.path.abspath(uploads_dir)
+        if not file_path.startswith(abs_uploads_dir) or not os.path.exists(file_path) or os.path.isdir(file_path):
+            self._send_error(HTTPStatus.NOT_FOUND, "Archivo no encontrado")
+            return
+            
+        content_type = "application/octet-stream"
+        if file_path.lower().endswith(".png"):
+            content_type = "image/png"
+        elif file_path.lower().endswith((".jpg", ".jpeg")):
+            content_type = "image/jpeg"
+            
+        try:
+            with open(file_path, "rb") as f:
+                data = f.read()
+            self.send_response(HTTPStatus.OK.value)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(data)))
+            
+            origin = self.headers.get("Origin")
+            if origin == "http://127.0.0.1:5500":
+                self.send_header("Access-Control-Allow-Origin", origin)
+            else:
+                self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(data)
+        except Exception:
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "Error al leer archivo")
+
+
+def _get_jpeg_size(data: bytes) -> tuple[int, int] | None:
+    size = len(data)
+    i = 2
+    while i + 4 < size:
+        if data[i] != 0xFF:
+            break
+        marker = data[i+1]
+        if marker == 0xD9:
+            break
+        if marker in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+            if i + 9 <= size:
+                height, width = struct.unpack('>HH', data[i+5:i+9])
+                return width, height
+            break
+        else:
+            segment_length = struct.unpack('>H', data[i+2:i+4])[0]
+            i += 2 + segment_length
+    return None
