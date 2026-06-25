@@ -41,10 +41,14 @@ class HttpBrandingTests(unittest.TestCase):
             self.repo,
             RegisterUserRequest(email="admin@branding.com", password="Secret1!", company_name="Branding Co"),
         )
-        # Verify the user
+        # Verify the user and company
         self.repo._persistent_conn.execute(
             "UPDATE users SET verified = 1 WHERE company_id = ? AND id = ?",
             (self.reg.company.id, self.reg.user.id),
+        )
+        self.repo._persistent_conn.execute(
+            "UPDATE companies SET is_verified = 1 WHERE id = ?",
+            (self.reg.company.id,),
         )
         self.repo._persistent_conn.commit()
 
