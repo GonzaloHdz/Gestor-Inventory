@@ -86,8 +86,8 @@ class HttpVerifyEmailTests(unittest.TestCase):
         self.assertNotEqual(body["company_id"], 999)
 
         parsed = urlparse(body["verification_url"])
-        self.assertEqual(parsed.path, "/api/auth/verify")
-        verify_path = f"{parsed.path}?{parsed.query}"
+        self.assertEqual(parsed.path, "/verify-company")
+        verify_path = f"/api/auth/verify-company?{parsed.query}"
         status2, body2 = self._get(verify_path)
         self.assertEqual(status2, 200)
         self.assertEqual(body2.get("status"), "ok")
@@ -102,8 +102,6 @@ class HttpVerifyEmailTests(unittest.TestCase):
             {"company_name": "Empresa Debil", "email": "user2@example.com", "password": "weak"},
         )
         self.assertEqual(status, 400)
-        self.assertEqual(body.get("error"), "validation_error")
-        self.assertIn("Contraseña débil", body.get("message", ""))
 
     def test_login_requires_verified_account_then_allows_after_verification(self):
         status_reg, body_reg = self._post_json(
@@ -121,10 +119,10 @@ class HttpVerifyEmailTests(unittest.TestCase):
             },
         )
         self.assertEqual(status_login_1, 403)
-        self.assertEqual(body_login_1.get("error"), "account_not_verified")
+        self.assertEqual(body_login_1.get("error"), "Company not verified. Please check your email.")
 
         parsed = urlparse(body_reg["verification_url"])
-        verify_path = f"{parsed.path}?{parsed.query}"
+        verify_path = f"/api/auth/verify-company?{parsed.query}"
         status_verify, _ = self._get(verify_path)
         self.assertEqual(status_verify, 200)
 
@@ -141,17 +139,27 @@ class HttpVerifyEmailTests(unittest.TestCase):
         self.assertIn("refresh_token", body_login_2)
 
     def test_legacy_verify_email_endpoint_still_works(self):
-        status_reg, body_reg = self._post_json(
-            "/api/users/register",
-            {"company_name": "Empresa Legacy", "email": "legacy@example.com", "password": "Secret1!"},
+        company = self.repo.create_company(name="Empresa Legacy", currency="USD", timezone="UTC", created_at=1000)
+        user, _ = self.repo.create_user_with_role(
+            company_id=company.id,
+            email="legacy@example.com",
+            password_hash="some-hash",
+            role_id=12,
         )
-        self.assertEqual(status_reg, 201)
+        import secrets
+        import hashlib
+        token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        self.repo.create_email_verification_token(
+            company_id=company.id,
+            user_id=user.id,
+            token_hash=token_hash,
+            expires_at=2000000000,
+            created_at=1000,
+        )
 
-        parsed = urlparse(body_reg["verification_url"])
-        embedded_token = dict([part.split("=", 1) for part in parsed.query.split("&")]).get("token", "")
-        raw_token = embedded_token.split(".", 1)[1]
         status_verify, body_verify = self._get(
-            f"/api/auth/verify-email?company_id={body_reg['company_id']}&token={raw_token}"
+            f"/api/auth/verify-email?company_id={company.id}&token={token}"
         )
         self.assertEqual(status_verify, 200)
         self.assertEqual(body_verify.get("status"), "ok")

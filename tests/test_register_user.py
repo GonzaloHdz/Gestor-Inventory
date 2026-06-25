@@ -39,9 +39,9 @@ class RegisterUserTests(unittest.TestCase):
         self.assertEqual(res.role_id, 12)
         parsed = urlparse(res.verification_url)
         params = parse_qs(parsed.query)
-        self.assertEqual(parsed.path, "/api/auth/verify")
+        self.assertEqual(parsed.path, "/verify-company")
         token = params["token"][0]
-        self.assertTrue(token.startswith(f"{res.company.id}."))
+        self.assertTrue(len(token) > 0)
         self.assertTrue(verify_password("Secret1!", res.user.password_hash))
 
     def test_register_user_rejects_weak_password_with_clear_message(self):

@@ -68,3 +68,7 @@ class PasswordResetTokenInvalidError(Exception):
 
 class PasswordResetTokenExpiredError(Exception):
     pass
+
+
+class CompanyNotVerifiedError(Exception):
+    pass

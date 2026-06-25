@@ -58,6 +58,7 @@ class SqliteUserRepository:
         email: str,
         password_hash: str,
         role_id: int,
+        verification_token: str | None = None,
     ) -> tuple[User, int]:
         with self._connect() as conn:
             try:
@@ -65,10 +66,10 @@ class SqliteUserRepository:
                 self._ensure_base_rbac(conn, company_id=company_id)
                 cur = conn.execute(
                     """
-                    INSERT INTO users (company_id, email, password_hash, is_active, verified)
-                    VALUES (?, ?, ?, 1, 0)
+                    INSERT INTO users (company_id, email, password_hash, is_active, verified, verification_token)
+                    VALUES (?, ?, ?, 1, 0, ?)
                     """,
-                    (company_id, email, password_hash),
+                    (company_id, email, password_hash, verification_token),
                 )
                 user_id = int(cur.lastrowid)
                 conn.execute(
@@ -92,6 +93,7 @@ class SqliteUserRepository:
                 password_hash=password_hash,
                 is_active=True,
                 verified=False,
+                verification_token=verification_token,
             )
             return user, role_id
 
@@ -166,7 +168,7 @@ class SqliteUserRepository:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT id, company_id, email, password_hash, is_active, verified
+                SELECT id, company_id, email, password_hash, is_active, verified, verification_token
                 FROM users
                 WHERE company_id = ? AND id = ?
                 LIMIT 1
@@ -175,7 +177,7 @@ class SqliteUserRepository:
             ).fetchone()
             if row is None:
                 return None
-            user_id_v, company_id_v, email_v, password_hash, is_active, verified = row
+            user_id_v, company_id_v, email_v, password_hash, is_active, verified, verification_token = row
             return User(
                 id=int(user_id_v),
                 company_id=int(company_id_v),
@@ -183,6 +185,31 @@ class SqliteUserRepository:
                 password_hash=str(password_hash),
                 is_active=bool(is_active),
                 verified=bool(verified),
+                verification_token=str(verification_token) if verification_token is not None else None,
+            )
+
+    def find_user_by_verification_token(self, *, token: str) -> User | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, company_id, email, password_hash, is_active, verified, verification_token
+                FROM users
+                WHERE verification_token = ?
+                LIMIT 1
+                """,
+                (str(token),),
+            ).fetchone()
+            if row is None:
+                return None
+            user_id_v, company_id_v, email_v, password_hash, is_active, verified, verification_token = row
+            return User(
+                id=int(user_id_v),
+                company_id=int(company_id_v),
+                email=str(email_v),
+                password_hash=str(password_hash),
+                is_active=bool(is_active),
+                verified=bool(verified),
+                verification_token=str(verification_token) if verification_token is not None else None,
             )
 
     def count_users_by_company(self, *, company_id: int) -> int:
@@ -586,6 +613,20 @@ class SqliteUserRepository:
                 """
                 UPDATE users
                 SET password_hash = ?
+                WHERE company_id = ? AND id = ?
+                """,
+                (password_hash, company_id, user_id),
+            )
+            if cur.rowcount != 1:
+                raise sqlite3.IntegrityError("user not found")
+            conn.commit()
+
+    def set_invited_employee_password(self, *, company_id: int, user_id: int, password_hash: str) -> None:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                UPDATE users
+                SET password_hash = ?, verified = 1, verification_token = NULL
                 WHERE company_id = ? AND id = ?
                 """,
                 (password_hash, company_id, user_id),
@@ -1392,14 +1433,23 @@ class SqliteUserRepository:
             row = conn.execute("SELECT 1 FROM companies WHERE name = ? LIMIT 1", (str(name),)).fetchone()
             return row is not None
 
-    def create_company(self, *, name: str, currency: str, timezone: str, created_at: int) -> Company:
+    def create_company(
+        self,
+        *,
+        name: str,
+        currency: str,
+        timezone: str,
+        created_at: int,
+        verification_token: str | None = None,
+        is_verified: int = 0,
+    ) -> Company:
         with self._connect() as conn:
             cur = conn.execute(
                 """
-                INSERT INTO companies (name, currency, timezone, status, created_at)
-                VALUES (?, ?, ?, 'active', ?)
+                INSERT INTO companies (name, currency, timezone, status, created_at, verification_token, is_verified)
+                VALUES (?, ?, ?, 'active', ?, ?, ?)
                 """,
-                (str(name), str(currency), str(timezone), int(created_at)),
+                (str(name), str(currency), str(timezone), int(created_at), verification_token, int(is_verified)),
             )
             company_id = int(cur.lastrowid)
             conn.commit()
@@ -1411,6 +1461,8 @@ class SqliteUserRepository:
                 status="active",
                 default_branch_id=None,
                 created_at=int(created_at),
+                verification_token=verification_token,
+                is_verified=int(is_verified),
             )
 
     def create_supplier(
@@ -1690,7 +1742,7 @@ class SqliteUserRepository:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT id, name, currency, timezone, status, default_branch_id, created_at
+                SELECT id, name, currency, timezone, status, default_branch_id, created_at, verification_token, is_verified
                 FROM companies
                 WHERE status = 'active'
                 ORDER BY id
@@ -1707,9 +1759,88 @@ class SqliteUserRepository:
                     status=str(status),
                     default_branch_id=int(default_branch_id) if default_branch_id is not None else None,
                     created_at=int(created_at),
+                    verification_token=str(verification_token) if verification_token is not None else None,
+                    is_verified=int(is_verified),
                 )
-                for (company_id, name, currency, timezone, status, default_branch_id, created_at) in rows
+                for (company_id, name, currency, timezone, status, default_branch_id, created_at, verification_token, is_verified) in rows
             ]
+
+    def get_company_by_id(self, *, company_id: int) -> Company | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, name, currency, timezone, status, default_branch_id, created_at, verification_token, is_verified
+                FROM companies
+                WHERE id = ?
+                LIMIT 1
+                """,
+                (int(company_id),),
+            ).fetchone()
+            if row is None:
+                return None
+            id_v, name, currency, timezone, status, default_branch_id, created_at, verification_token, is_verified = row
+            return Company(
+                id=int(id_v),
+                name=str(name),
+                currency=str(currency),
+                timezone=str(timezone),
+                status=str(status),
+                default_branch_id=int(default_branch_id) if default_branch_id is not None else None,
+                created_at=int(created_at),
+                verification_token=str(verification_token) if verification_token is not None else None,
+                is_verified=int(is_verified),
+            )
+
+    def find_company_by_verification_token(self, *, token: str) -> Company | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, name, currency, timezone, status, default_branch_id, created_at, verification_token, is_verified
+                FROM companies
+                WHERE verification_token = ?
+                LIMIT 1
+                """,
+                (str(token),),
+            ).fetchone()
+            if row is None:
+                return None
+            id_v, name, currency, timezone, status, default_branch_id, created_at, verification_token, is_verified = row
+            return Company(
+                id=int(id_v),
+                name=str(name),
+                currency=str(currency),
+                timezone=str(timezone),
+                status=str(status),
+                default_branch_id=int(default_branch_id) if default_branch_id is not None else None,
+                created_at=int(created_at),
+                verification_token=str(verification_token) if verification_token is not None else None,
+                is_verified=int(is_verified),
+            )
+
+    def verify_company_in_db(self, *, company_id: int) -> None:
+        with self._connect() as conn:
+            conn.execute("BEGIN")
+            conn.execute(
+                """
+                UPDATE companies
+                SET is_verified = 1, verification_token = NULL
+                WHERE id = ?
+                """,
+                (int(company_id),),
+            )
+            # Find and verify admin user of the company: role ID 12 or 13
+            conn.execute(
+                """
+                UPDATE users
+                SET verified = 1
+                WHERE company_id = ? AND id IN (
+                    SELECT ur.user_id FROM user_roles ur
+                    WHERE ur.company_id = ? AND ur.role_id IN (12, 13)
+                )
+                """,
+                (int(company_id), int(company_id)),
+            )
+            conn.commit()
 
     def update_company_default_branch(self, *, company_id: int, default_branch_id: int | None) -> None:
         with self._connect() as conn:
@@ -2161,6 +2292,8 @@ class SqliteUserRepository:
                   status TEXT NOT NULL DEFAULT 'active',
                   default_branch_id INTEGER NULL,
                   created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+                  verification_token TEXT NULL,
+                  is_verified INTEGER NOT NULL DEFAULT 0,
                   CONSTRAINT companies_name_unique UNIQUE (name),
                   CONSTRAINT companies_default_branch_fk FOREIGN KEY (default_branch_id) REFERENCES branches (id)
                 );
@@ -2185,6 +2318,7 @@ class SqliteUserRepository:
                   password_hash TEXT NOT NULL,
                   is_active INTEGER NOT NULL DEFAULT 1,
                   verified INTEGER NOT NULL DEFAULT 0,
+                  verification_token TEXT NULL,
                   CONSTRAINT users_company_email_unique UNIQUE (company_id, email)
                 );
                 CREATE INDEX IF NOT EXISTS users_company_id_idx ON users (company_id);
@@ -2500,6 +2634,16 @@ class SqliteUserRepository:
                 conn.execute("ALTER TABLE companies ADD COLUMN status TEXT NOT NULL DEFAULT 'active'")
             if "default_branch_id" not in cols:
                 conn.execute("ALTER TABLE companies ADD COLUMN default_branch_id INTEGER NULL")
+            if "verification_token" not in cols:
+                conn.execute("ALTER TABLE companies ADD COLUMN verification_token TEXT NULL")
+            if "is_verified" not in cols:
+                conn.execute("ALTER TABLE companies ADD COLUMN is_verified INTEGER NOT NULL DEFAULT 0")
+                conn.execute("UPDATE companies SET is_verified = 1")
+
+            user_cols = [row[1] for row in conn.execute("PRAGMA table_info(users)").fetchall()]
+            if "verification_token" not in user_cols:
+                conn.execute("ALTER TABLE users ADD COLUMN verification_token TEXT NULL")
+
             branch_cols = [row[1] for row in conn.execute("PRAGMA table_info(branches)").fetchall()]
             if "address" not in branch_cols:
                 conn.execute("ALTER TABLE branches ADD COLUMN address TEXT NULL")
@@ -2530,10 +2674,10 @@ class SqliteUserRepository:
             )
             conn.execute(
                 """
-                INSERT OR IGNORE INTO companies (id, name, currency, timezone, status, created_at, default_branch_id)
+                INSERT OR IGNORE INTO companies (id, name, currency, timezone, status, created_at, default_branch_id, is_verified)
                 VALUES
-                  (1, 'Empresa 1', 'USD', 'UTC', 'active', strftime('%s','now'), NULL),
-                  (2, 'Empresa 2', 'USD', 'UTC', 'active', strftime('%s','now'), NULL)
+                  (1, 'Empresa 1', 'USD', 'UTC', 'active', strftime('%s','now'), NULL, 1),
+                  (2, 'Empresa 2', 'USD', 'UTC', 'active', strftime('%s','now'), NULL, 1)
                 """
             )
             conn.commit()

@@ -9,3 +9,4 @@ class User:
     password_hash: str
     is_active: bool
     verified: bool
+    verification_token: str | None = None
