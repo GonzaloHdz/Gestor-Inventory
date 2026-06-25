@@ -52,7 +52,7 @@ class HttpAuthMiddlewareTests(unittest.TestCase):
     def test_protected_endpoint_requires_bearer_token(self):
         status, body = self._get("/api/auth/me")
         self.assertEqual(status, 401)
-        self.assertEqual(body.get("error"), "unauthorized")
+        self.assertEqual(body.get("error"), "No autorizado")
 
     def test_protected_endpoint_accepts_valid_token(self):
         token = create_jwt_hs256(
@@ -65,6 +65,8 @@ class HttpAuthMiddlewareTests(unittest.TestCase):
         self.assertEqual(body["company_id"], 1)
         self.assertEqual(body["email"], "user@example.com")
         self.assertIn("exp", body)
+        self.assertIn("user_role", body)
+        self.assertIn("user_permissions", body)
 
     def test_protected_endpoint_rejects_expired_token(self):
         token = create_jwt_hs256(
@@ -74,7 +76,7 @@ class HttpAuthMiddlewareTests(unittest.TestCase):
         )
         status, body = self._get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
         self.assertEqual(status, 401)
-        self.assertEqual(body.get("error"), "unauthorized")
+        self.assertEqual(body.get("error"), "No autorizado")
 
 
 if __name__ == "__main__":

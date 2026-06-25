@@ -146,21 +146,31 @@ class CompanySettingsIsolationIntegrationTests(unittest.TestCase):
         token_a = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
         status, body = self._put("/api/admin/settings", {"llave_falsa": "123"}, token=token_a)
         self.assertEqual(status, 400)
-        self.assertEqual(body.get("error"), "validation_error")
-        self.assertIn("llave_falsa", str(body.get("message", "")))
+        self.assertIn("Llave de configuración no permitida: llave_falsa", body.get("error", ""))
 
     def test_settings_validation_rejects_invalid_value(self):
         token_a = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
         status, body = self._put("/api/admin/settings", {"stock_minimo": "letras"}, token=token_a)
         self.assertEqual(status, 400)
-        self.assertEqual(body.get("error"), "validation_error")
-        self.assertIn("stock_minimo", str(body.get("message", "")))
+        self.assertIn("stock_minimo debe ser numérico", body.get("error", ""))
 
     def test_settings_validation_accepts_known_keys(self):
         token_a = self._token_for(user_id=self.admin_a.id, company_id=1, email=self.admin_a.email)
         status, _ = self._put(
             "/api/admin/settings",
-            {"moneda": "mxn", "stock_minimo": 5, "notificaciones_activas": False},
+            {
+                "moneda": "mxn",
+                "stock_minimo": 5,
+                "notificaciones_activas": False,
+                "company_rfc": "XAXX010101000",
+                "company_razon_social": "Mi Empresa S.A. de C.V.",
+                "company_regimen_fiscal": "601",
+                "company_address": "Av. Principal 123",
+                "company_cp": "91000",
+                "company_phone": "2281234567",
+                "company_facturacion_email": "facturas@miempresa.com",
+                "company_description": "Empresa de prueba"
+            },
             token=token_a,
         )
         self.assertEqual(status, 200)
@@ -178,9 +188,19 @@ class CompanySettingsIsolationIntegrationTests(unittest.TestCase):
             "SELECT setting_value FROM company_settings WHERE company_id = 1 AND setting_key = ?",
             ("notificaciones_activas",),
         ).fetchone()
+        rfc = conn.execute(
+            "SELECT setting_value FROM company_settings WHERE company_id = 1 AND setting_key = ?",
+            ("company_rfc",),
+        ).fetchone()
+        razon = conn.execute(
+            "SELECT setting_value FROM company_settings WHERE company_id = 1 AND setting_key = ?",
+            ("company_razon_social",),
+        ).fetchone()
         self.assertEqual(str(moneda[0]), "MXN")
         self.assertEqual(str(stock_minimo[0]), "5")
         self.assertEqual(str(notificaciones[0]), "false")
+        self.assertEqual(str(rfc[0]), "XAXX010101000")
+        self.assertEqual(str(razon[0]), "Mi Empresa S.A. de C.V.")
 
 
 if __name__ == "__main__":

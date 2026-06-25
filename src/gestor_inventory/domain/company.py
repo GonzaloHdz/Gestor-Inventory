@@ -25,6 +25,14 @@ ALLOWED_COMPANY_SETTING_KEYS = {
     "secondary_color",
     "accent_color",
     "logo_url",
+    "company_rfc",
+    "company_razon_social",
+    "company_regimen_fiscal",
+    "company_address",
+    "company_cp",
+    "company_phone",
+    "company_facturacion_email",
+    "company_description",
 }
 
 
@@ -74,6 +82,20 @@ def normalize_company_setting_value(*, setting_key: str, raw_value: object) -> s
     if setting_key == "logo_url":
         if not isinstance(raw_value, str):
             raise ValidationError("logo_url debe ser un string")
+        return raw_value.strip()
+
+    if setting_key in (
+        "company_rfc",
+        "company_razon_social",
+        "company_regimen_fiscal",
+        "company_address",
+        "company_cp",
+        "company_phone",
+        "company_facturacion_email",
+        "company_description",
+    ):
+        if not isinstance(raw_value, str):
+            raise ValidationError(f"{setting_key} debe ser un string")
         return raw_value.strip()
 
     raise ValidationError(f"Llave de configuración no permitida: {setting_key}")

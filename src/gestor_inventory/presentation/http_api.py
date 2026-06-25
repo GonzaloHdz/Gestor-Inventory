@@ -1714,6 +1714,8 @@ class HttpApiHandler(BaseHTTPRequestHandler):
                 "email": payload.get("email"),
                 "iat": payload.get("iat"),
                 "exp": payload.get("exp"),
+                "user_role": main_role,
+                "user_permissions": permissions,
                 "user": {
                     "id": int(user_id_raw) if user_id_raw else None,
                     "role": main_role,
