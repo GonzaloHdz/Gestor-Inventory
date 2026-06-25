@@ -879,7 +879,7 @@ class HttpApiHandler(BaseHTTPRequestHandler):
     def _handle_create_branch(self) -> None:
         try:
             payload = self._read_json()
-            authz = self._require_permissions({"sucursal:crear"})
+            authz = self._require_permissions({"sucursales:crear"})
             if authz is None:
                 return
             company_id = int(authz.get("company_id"))
@@ -2138,6 +2138,107 @@ class HttpApiHandler(BaseHTTPRequestHandler):
             self._send_error(HTTPStatus.BAD_REQUEST, str(e))
         except (TypeError, ValueError):
             self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
+        except Exception as e:
+            self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, f"Error interno: {str(e)}")
+
+    def _handle_register_inventory_movement(self) -> None:
+        try:
+            authz = self._require_permissions({"movimientos:crear"})
+            if authz is None:
+                return
+            company_id = int(authz.get("company_id"))
+            actor_user_id = int(authz.get("sub"))
+
+            payload = self._read_json()
+            if not isinstance(payload, dict):
+                raise ValidationError("Payload inválido")
+
+            branch_id_raw = payload.get("branch_id") or payload.get("almacen_id") or payload.get("almacen")
+            product_id_raw = payload.get("product_id") or payload.get("producto_id") or payload.get("producto")
+            movement_type = payload.get("movement_type") or payload.get("type") or payload.get("tipo")
+            quantity_raw = payload.get("quantity") or payload.get("cantidad")
+            reference = payload.get("reference") or payload.get("referencia")
+
+            if branch_id_raw is None:
+                token_branch_id = authz.get("branch_id")
+                if token_branch_id is not None:
+                    branch_id_raw = token_branch_id
+
+            if branch_id_raw is None or product_id_raw is None or movement_type is None or quantity_raw is None:
+                raise ValidationError("Faltan campos requeridos")
+
+            try:
+                branch_id = int(branch_id_raw)
+                product_id = int(product_id_raw)
+                quantity = int(quantity_raw)
+            except (ValueError, TypeError):
+                raise ValidationError("Los campos de IDs y cantidad deben ser numéricos")
+
+            if not self._require_branch_access(authz, branch_id):
+                return
+
+            res = register_inventory_movement(
+                self.repo,
+                RegisterInventoryMovementRequest(
+                    company_id=company_id,
+                    branch_id=branch_id,
+                    product_id=product_id,
+                    user_id=actor_user_id,
+                    movement_type=str(movement_type),
+                    quantity=quantity,
+                    reference=str(reference) if reference is not None else None,
+                ),
+            )
+
+            # Auditar la acción
+            self._audit_data(
+                authz,
+                action="CREATE",
+                resource="inventario",
+                details=json.dumps(
+                    {
+                        "branch_id": res.movement.branch_id,
+                        "product_id": res.movement.product_id,
+                        "quantity": res.movement.quantity,
+                        "type": res.movement.movement_type,
+                    },
+                    separators=(",", ":"),
+                ),
+            )
+
+            self._send_json(
+                HTTPStatus.CREATED,
+                {
+                    "status": "ok",
+                    "item": {
+                        "company_id": res.item.company_id,
+                        "branch_id": res.item.branch_id,
+                        "product_id": res.item.product_id,
+                        "quantity": res.item.quantity,
+                        "min_quantity": res.item.min_quantity,
+                        "updated_at": res.item.updated_at,
+                    },
+                    "movement": {
+                        "id": res.movement.id,
+                        "company_id": res.movement.company_id,
+                        "branch_id": res.movement.branch_id,
+                        "product_id": res.movement.product_id,
+                        "user_id": res.movement.user_id,
+                        "movement_type": res.movement.movement_type,
+                        "quantity": res.movement.quantity,
+                        "reference": res.movement.reference,
+                        "created_at": res.movement.created_at,
+                    },
+                },
+            )
+        except NotFoundError as e:
+            self._send_error(HTTPStatus.NOT_FOUND, str(e))
+        except ValidationError as e:
+            self._send_error(HTTPStatus.BAD_REQUEST, str(e))
+        except (TypeError, ValueError):
+            self._send_error(HTTPStatus.BAD_REQUEST, "Payload inválido")
+        except json.JSONDecodeError:
+            self._send_error(HTTPStatus.BAD_REQUEST, "JSON inválido")
         except Exception as e:
             self._send_error(HTTPStatus.INTERNAL_SERVER_ERROR, f"Error interno: {str(e)}")
 

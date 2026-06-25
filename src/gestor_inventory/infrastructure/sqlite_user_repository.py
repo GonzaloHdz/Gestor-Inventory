@@ -2221,26 +2221,23 @@ class SqliteUserRepository:
                 (211, "movimientos:crear", "Crear movimientos de inventario"),
                 (300, "productos:crear", "Crear productos"),
                 (301, "productos:leer", "Leer productos"),
-                (302, "productos:modificar", "Modificar productos"),
                 (303, "productos:eliminar", "Eliminar productos"),
                 (304, "productos:editar", "Editar productos"),
                 (320, "categorias:leer", "Leer categorías"),
                 (400, "proveedores:crear", "Crear proveedores"),
                 (401, "proveedores:leer", "Leer proveedores"),
-                (402, "proveedores:modificar", "Modificar proveedores"),
                 (403, "proveedores:eliminar", "Eliminar proveedores"),
                 (404, "proveedores:editar", "Editar proveedores"),
                 (500, "compras:crear", "Crear órdenes de compra"),
                 (501, "compras:leer", "Leer órdenes de compra"),
                 (502, "compras:aprobar", "Aprobar órdenes de compra"),
                 (600, "reportes:leer", "Leer reportes"),
-                (700, "configuracion:modificar", "Modificar configuración"),
                 (701, "configuracion:leer", "Leer configuración"),
                 (702, "configuracion:editar", "Editar configuración"),
                 (800, "empresas:crear", "Crear empresas"),
                 (801, "empresas:leer", "Leer empresas"),
                 (802, "empresas:editar", "Editar empresas"),
-                (810, "sucursal:crear", "Crear sucursales"),
+                (810, "sucursales:crear", "Crear sucursales"),
                 (811, "sucursales:leer", "Leer sucursales"),
                 (812, "sucursales:editar", "Editar sucursales"),
                 (813, "sucursales:eliminar", "Eliminar (desactivar) sucursales"),
@@ -2251,7 +2248,7 @@ class SqliteUserRepository:
             INSERT OR IGNORE INTO role_permissions (company_id, role_id, permission_id)
             SELECT r.company_id, r.id, p.id
             FROM roles r
-            JOIN permissions p ON p.code IN ('inventario:leer', 'movimientos:leer', 'productos:leer')
+            JOIN permissions p ON p.code IN ('inventario:leer', 'movimientos:leer', 'productos:leer', 'movimientos:crear', 'sucursales:leer')
             WHERE r.name = 'Almacenista' AND r.company_id = ?
             """,
             (int(company_id),),
@@ -2262,7 +2259,7 @@ class SqliteUserRepository:
             SELECT r.company_id, r.id, p.id
             FROM roles r
             JOIN permissions p
-              ON p.code IN ('inventario:leer', 'inventario:modificar', 'movimientos:leer', 'movimientos:crear', 'productos:leer', 'reportes:leer')
+              ON p.code IN ('inventario:leer', 'inventario:modificar', 'movimientos:leer', 'movimientos:crear', 'productos:leer', 'reportes:leer', 'usuarios:listar', 'proveedores:leer', 'compras:aprobar', 'usuarios:editar')
             WHERE r.name = 'Supervisor' AND r.company_id = ?
             """,
             (int(company_id),),
@@ -2589,24 +2586,23 @@ class SqliteUserRepository:
                   (211, 'movimientos:crear', 'Crear movimientos de inventario'),
                   (300, 'productos:crear', 'Crear productos'),
                   (301, 'productos:leer', 'Leer productos'),
-                  (302, 'productos:modificar', 'Modificar productos'),
                   (303, 'productos:eliminar', 'Eliminar productos'),
+                  (304, 'productos:editar', 'Editar productos'),
+                  (320, 'categorias:leer', 'Leer categorías'),
                   (400, 'proveedores:crear', 'Crear proveedores'),
                   (401, 'proveedores:leer', 'Leer proveedores'),
-                  (402, 'proveedores:modificar', 'Modificar proveedores'),
                   (403, 'proveedores:eliminar', 'Eliminar proveedores'),
                   (404, 'proveedores:editar', 'Editar proveedores'),
                   (500, 'compras:crear', 'Crear órdenes de compra'),
                   (501, 'compras:leer', 'Leer órdenes de compra'),
                   (502, 'compras:aprobar', 'Aprobar órdenes de compra'),
                   (600, 'reportes:leer', 'Leer reportes'),
-                  (700, 'configuracion:modificar', 'Modificar configuración'),
                   (701, 'configuracion:leer', 'Leer configuración'),
                   (702, 'configuracion:editar', 'Editar configuración'),
                   (800, 'empresas:crear', 'Crear empresas'),
                   (801, 'empresas:leer', 'Leer empresas'),
                   (802, 'empresas:editar', 'Editar empresas'),
-                  (810, 'sucursal:crear', 'Crear sucursales'),
+                  (810, 'sucursales:crear', 'Crear sucursales'),
                   (811, 'sucursales:leer', 'Leer sucursales'),
                   (812, 'sucursales:editar', 'Editar sucursales'),
                   (813, 'sucursales:eliminar', 'Eliminar (desactivar) sucursales');
@@ -2614,14 +2610,14 @@ class SqliteUserRepository:
                 INSERT OR IGNORE INTO role_permissions (company_id, role_id, permission_id)
                 SELECT r.company_id, r.id, p.id
                 FROM roles r
-                JOIN permissions p ON p.code IN ('inventario:leer', 'movimientos:leer', 'productos:leer')
+                JOIN permissions p ON p.code IN ('inventario:leer', 'movimientos:leer', 'productos:leer', 'movimientos:crear', 'sucursales:leer')
                 WHERE r.name = 'Almacenista' AND r.company_id IN (1, 2);
 
                 INSERT OR IGNORE INTO role_permissions (company_id, role_id, permission_id)
                 SELECT r.company_id, r.id, p.id
                 FROM roles r
                 JOIN permissions p
-                  ON p.code IN ('inventario:leer', 'inventario:modificar', 'movimientos:leer', 'movimientos:crear', 'productos:leer', 'reportes:leer')
+                  ON p.code IN ('inventario:leer', 'inventario:modificar', 'movimientos:leer', 'movimientos:crear', 'productos:leer', 'reportes:leer', 'usuarios:listar', 'proveedores:leer', 'compras:aprobar', 'usuarios:editar')
                 WHERE r.name = 'Supervisor' AND r.company_id IN (1, 2);
 
                 INSERT OR IGNORE INTO role_permissions (company_id, role_id, permission_id)
@@ -2688,4 +2684,52 @@ class SqliteUserRepository:
                   (2, 'Empresa 2', 'USD', 'UTC', 'active', strftime('%s','now'), NULL, 1)
                 """
             )
+            
+            # MIGRACIONES EN CALIENTE PARA BASES DE DATOS EXISTENTES
+            # 1. Renombrar sucursal:crear a sucursales:crear
+            conn.execute("UPDATE permissions SET code = 'sucursales:crear' WHERE code = 'sucursal:crear'")
+            
+            # 2. Asegurar permiso movimientos:crear y sucursales:leer para Almacenista (ID 10) en todas las empresas
+            for code in ('movimientos:crear', 'sucursales:leer'):
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO role_permissions (company_id, role_id, permission_id)
+                    SELECT r.company_id, r.id, p.id
+                    FROM roles r
+                    JOIN permissions p ON p.code = ?
+                    WHERE r.id = 10
+                    """,
+                    (code,)
+                )
+            
+            # 3. Asegurar permisos para Supervisor (ID 11) en todas las empresas
+            for code in ('usuarios:listar', 'proveedores:leer', 'compras:aprobar', 'usuarios:editar'):
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO role_permissions (company_id, role_id, permission_id)
+                    SELECT r.company_id, r.id, p.id
+                    FROM roles r
+                    JOIN permissions p ON p.code = ?
+                    WHERE r.id = 11
+                    """,
+                    (code,)
+                )
+            
+            # 4. Eliminar permisos obsoletos `:modificar`
+            conn.execute(
+                """
+                DELETE FROM role_permissions
+                WHERE permission_id IN (
+                    SELECT id FROM permissions
+                    WHERE code IN ('productos:modificar', 'proveedores:modificar', 'configuracion:modificar')
+                )
+                """
+            )
+            conn.execute(
+                """
+                DELETE FROM permissions
+                WHERE code IN ('productos:modificar', 'proveedores:modificar', 'configuracion:modificar')
+                """
+            )
+
             conn.commit()

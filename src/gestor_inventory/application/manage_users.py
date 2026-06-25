@@ -169,12 +169,22 @@ def _assert_actor_can_manage_target(
     actor_role_names = set(repo.list_user_role_names(company_id=company_id, user_id=actor_user_id))
     if "Superadministrador" in actor_role_names:
         return
-    if "Administrador" not in actor_role_names:
-        raise ForbiddenError("No tienes permisos para gestionar usuarios")
 
     target_role_names = set(repo.list_user_role_names(company_id=company_id, user_id=target_user_id))
     if "Superadministrador" in target_role_names:
         raise ForbiddenError("No puedes gestionar un Superadministrador")
+
+    if "Administrador" in actor_role_names:
+        return
+
+    if "Supervisor" in actor_role_names:
+        if "Supervisor" in target_role_names or "Administrador" in target_role_names:
+            raise ForbiddenError("Un Supervisor no puede gestionar a otros Supervisores ni Administradores")
+        if "Almacenista" not in target_role_names:
+            raise ForbiddenError("Un Supervisor solo puede gestionar usuarios con rol Almacenista")
+        return
+
+    raise ForbiddenError("No tienes permisos para gestionar usuarios")
 
 
 def _validate_company_id(company_id: int) -> int:
